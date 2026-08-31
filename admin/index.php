@@ -1610,6 +1610,11 @@ td {
             Deliveries
         </a>
 
+        <a href="deliveryboy/index.php">
+            <span class="menu-icon">🛵</span>
+            Delivery Boys
+        </a>
+
 
         <a href="hero.php">
             <span class="menu-icon">🖼️</span>

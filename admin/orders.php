@@ -255,8 +255,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         )
     ) {
 
-        $error =
-            "Invalid request. Please refresh the page and try again.";
+        $error = "Invalid request. Please refresh the page and try again.";
 
     } else {
 
@@ -264,14 +263,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
            UPDATE ORDER
         ================================================= */
 
-        if (
-            ($_POST['action'] ?? '') ===
-            'update_order'
-        ) {
+        if (($_POST['action'] ?? '') === 'update_order') {
 
-            $id = (int)(
-                $_POST['id'] ?? 0
-            );
+            $id = (int)($_POST['id'] ?? 0);
 
             $newOrderStatus = trim(
                 $_POST['order_status'] ?? ''
@@ -292,8 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($id <= 0) {
 
-                $error =
-                    "Invalid order ID.";
+                $error = "Invalid order ID.";
 
             } elseif (
                 !in_array(
@@ -303,8 +296,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ) {
 
-                $error =
-                    "Invalid order status.";
+                $error = "Invalid order status.";
 
             } elseif (
                 !in_array(
@@ -314,13 +306,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ) {
 
-                $error =
-                    "Invalid payment status.";
+                $error = "Invalid payment status.";
 
             } else {
 
                 /* =========================================
-                   GET ORDER
+                   GET EXISTING ORDER
                 ========================================= */
 
                 $checkOrder = $conn->prepare(
@@ -334,7 +325,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      LIMIT 1"
                 );
 
-
                 if (!$checkOrder) {
 
                     $error =
@@ -347,98 +337,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $id
                     );
 
-                    $checkOrder->execute();
-
-                    $orderResult =
-                        $checkOrder->get_result();
-
-
-                    if (
-                        !$orderResult ||
-                        $orderResult->num_rows !== 1
-                    ) {
+                    if (!$checkOrder->execute()) {
 
                         $error =
-                            "Order not found.";
+                            "Unable to check order.";
 
                         $checkOrder->close();
 
                     } else {
 
-                        $existingOrder =
-                            $orderResult->fetch_assoc();
+                        $orderResult =
+                            $checkOrder->get_result();
 
-                        $checkOrder->close();
+                        if (
+                            !$orderResult ||
+                            $orderResult->num_rows !== 1
+                        ) {
 
+                            $error =
+                                "Order not found.";
 
-                        /* =================================
-                           DELIVERY STATUS
-                        ================================= */
+                            $checkOrder->close();
 
-                        $newDeliveryStatus =
-                            getDeliveryStatusFromOrderStatus(
-                                $newOrderStatus
-                            );
+                        } else {
 
+                            $existingOrder =
+                                $orderResult->fetch_assoc();
 
-                        /* =================================
-                           START TRANSACTION
-                        ================================= */
+                            $checkOrder->close();
 
-                        $conn->begin_transaction();
-
-                        $success = true;
-
-
-                        try {
 
                             /* =================================
-                               UPDATE ORDERS
+                               CALCULATE DELIVERY STATUS
                             ================================= */
 
-                            $updateOrder =
-                                $conn->prepare(
-                                    "UPDATE orders SET
+                            $newDeliveryStatus =
+                                getDeliveryStatusFromOrderStatus(
+                                    $newOrderStatus
+                                );
+
+
+                            /* =================================
+                               START TRANSACTION
+                            ================================= */
+
+                            $conn->begin_transaction();
+
+
+                            try {
+
+                                /* =================================
+                                   1. UPDATE ORDER
+                                ================================= */
+
+                                $updateOrder = $conn->prepare(
+                                    "UPDATE orders
+                                     SET
                                         order_status = ?,
                                         payment_status = ?,
-                                        admin_note = ?
+                                        admin_note = ?,
+                                        updated_at = CURRENT_TIMESTAMP
                                      WHERE id = ?"
                                 );
 
 
-                            if (!$updateOrder) {
-                                throw new Exception(
-                                    "Order update prepare failed."
+                                if (!$updateOrder) {
+
+                                    throw new Exception(
+                                        "Order update prepare failed."
+                                    );
+                                }
+
+
+                                $updateOrder->bind_param(
+                                    "sssi",
+                                    $newOrderStatus,
+                                    $newPaymentStatus,
+                                    $adminNote,
+                                    $id
                                 );
-                            }
 
 
-                            $updateOrder->bind_param(
-                                "sssi",
-                                $newOrderStatus,
-                                $newPaymentStatus,
-                                $adminNote,
-                                $id
-                            );
+                                if (
+                                    !$updateOrder->execute()
+                                ) {
+
+                                    throw new Exception(
+                                        "Order update failed: " .
+                                        $updateOrder->error
+                                    );
+                                }
 
 
-                            if (!$updateOrder->execute()) {
-
-                                throw new Exception(
-                                    "Order update failed."
-                                );
-                            }
+                                $updateOrder->close();
 
 
-                            $updateOrder->close();
+                                /* =================================
+                                   2. CHECK DELIVERY
+                                ================================= */
 
-
-                            /* =================================
-                               CHECK DELIVERY RECORD
-                            ================================= */
-
-                            $checkDelivery =
-                                $conn->prepare(
+                                $checkDelivery = $conn->prepare(
                                     "SELECT
                                         id,
                                         status,
@@ -449,421 +447,508 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 );
 
 
-                            if (!$checkDelivery) {
+                                if (!$checkDelivery) {
 
-                                throw new Exception(
-                                    "Delivery check failed."
+                                    throw new Exception(
+                                        "Delivery check prepare failed."
+                                    );
+                                }
+
+
+                                $checkDelivery->bind_param(
+                                    "i",
+                                    $id
                                 );
-                            }
 
 
-                            $checkDelivery->bind_param(
-                                "i",
-                                $id
-                            );
+                                if (
+                                    !$checkDelivery->execute()
+                                ) {
 
-                            $checkDelivery->execute();
+                                    throw new Exception(
+                                        "Unable to check delivery."
+                                    );
+                                }
 
-                            $deliveryResult =
-                                $checkDelivery->get_result();
+
+                                $deliveryResult =
+                                    $checkDelivery->get_result();
 
 
-                            $deliveryExists =
-                                (
+                                $existingDelivery = null;
+
+
+                                if (
                                     $deliveryResult &&
                                     $deliveryResult->num_rows > 0
-                                );
+                                ) {
 
-                            $existingDelivery = null;
-
-
-                            if ($deliveryExists) {
-
-                                $existingDelivery =
-                                    $deliveryResult->fetch_assoc();
-                            }
+                                    $existingDelivery =
+                                        $deliveryResult->fetch_assoc();
+                                }
 
 
-                            $checkDelivery->close();
-
-
-                            /* =================================
-                               DELIVERY EXISTS
-                            ================================= */
-
-                            if ($deliveryExists) {
-
-                                $deliveryId =
-                                    (int)$existingDelivery['id'];
+                                $checkDelivery->close();
 
 
                                 /* =================================
-                                   UPDATE DELIVERY
+                                   3. UPDATE EXISTING DELIVERY
                                 ================================= */
 
-                                if (
-                                    $newDeliveryStatus ===
-                                    'assigned'
-                                ) {
+                                if ($existingDelivery) {
 
-                                    $updateDelivery =
-                                        $conn->prepare(
-                                            "UPDATE deliveries SET
-                                                status = 'assigned',
-                                                assigned_at =
-                                                    COALESCE(
-                                                        assigned_at,
+                                    $deliveryId =
+                                        (int)$existingDelivery['id'];
+
+
+                                    /* =================================
+                                       PENDING
+                                    ================================= */
+
+                                    if (
+                                        $newDeliveryStatus ===
+                                        'pending'
+                                    ) {
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = 'pending',
+                                                    updated_at =
                                                         CURRENT_TIMESTAMP
-                                                    ),
-                                                updated_at =
-                                                    CURRENT_TIMESTAMP
-                                             WHERE id = ?"
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Pending delivery update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "i",
+                                            $deliveryId
                                         );
 
-                                } elseif (
-                                    $newDeliveryStatus ===
-                                    'out_for_delivery'
-                                ) {
 
-                                    $updateDelivery =
-                                        $conn->prepare(
-                                            "UPDATE deliveries SET
-                                                status = 'out_for_delivery',
-                                                out_for_delivery_at =
-                                                    COALESCE(
-                                                        out_for_delivery_at,
+                                    /* =================================
+                                       ASSIGNED
+                                    ================================= */
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'assigned'
+                                    ) {
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = 'assigned',
+                                                    assigned_at =
+                                                        COALESCE(
+                                                            assigned_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+                                                    updated_at =
                                                         CURRENT_TIMESTAMP
-                                                    ),
-                                                updated_at =
-                                                    CURRENT_TIMESTAMP
-                                             WHERE id = ?"
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Assigned delivery update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "i",
+                                            $deliveryId
                                         );
 
-                                } elseif (
-                                    $newDeliveryStatus ===
-                                    'delivered'
-                                ) {
 
-                                    $updateDelivery =
-                                        $conn->prepare(
-                                            "UPDATE deliveries SET
-                                                status = 'delivered',
-                                                delivered_at =
-                                                    COALESCE(
-                                                        delivered_at,
+                                    /* =================================
+                                       OUT FOR DELIVERY
+                                    ================================= */
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'out_for_delivery'
+                                    ) {
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = 'out_for_delivery',
+
+                                                    assigned_at =
+                                                        COALESCE(
+                                                            assigned_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+
+                                                    out_for_delivery_at =
+                                                        COALESCE(
+                                                            out_for_delivery_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+
+                                                    updated_at =
                                                         CURRENT_TIMESTAMP
-                                                    ),
-                                                updated_at =
-                                                    CURRENT_TIMESTAMP
-                                             WHERE id = ?"
+
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Out for delivery update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "i",
+                                            $deliveryId
                                         );
 
-                                } elseif (
-                                    $newDeliveryStatus ===
-                                    'cancelled'
-                                ) {
 
-                                    $updateDelivery =
-                                        $conn->prepare(
-                                            "UPDATE deliveries SET
-                                                status = 'cancelled',
-                                                updated_at =
-                                                    CURRENT_TIMESTAMP
-                                             WHERE id = ?"
+                                    /* =================================
+                                       DELIVERED
+                                    ================================= */
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'delivered'
+                                    ) {
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = 'delivered',
+
+                                                    assigned_at =
+                                                        COALESCE(
+                                                            assigned_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+
+                                                    out_for_delivery_at =
+                                                        COALESCE(
+                                                            out_for_delivery_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+
+                                                    delivered_at =
+                                                        COALESCE(
+                                                            delivered_at,
+                                                            CURRENT_TIMESTAMP
+                                                        ),
+
+                                                    updated_at =
+                                                        CURRENT_TIMESTAMP
+
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Delivered update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "i",
+                                            $deliveryId
                                         );
+
+
+                                    /* =================================
+                                       CANCELLED
+                                    ================================= */
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'cancelled'
+                                    ) {
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = 'cancelled',
+                                                    updated_at =
+                                                        CURRENT_TIMESTAMP
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Cancelled delivery update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "i",
+                                            $deliveryId
+                                        );
+
+
+                                    /* =================================
+                                       OTHER DELIVERY STATUS
+                                    ================================= */
+
+                                    } else {
+
+                                        if (
+                                            !in_array(
+                                                $newDeliveryStatus,
+                                                $allowedDeliveryStatuses,
+                                                true
+                                            )
+                                        ) {
+
+                                            throw new Exception(
+                                                "Invalid delivery status."
+                                            );
+                                        }
+
+
+                                        $updateDelivery =
+                                            $conn->prepare(
+                                                "UPDATE deliveries
+                                                 SET
+                                                    status = ?,
+                                                    updated_at =
+                                                        CURRENT_TIMESTAMP
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateDelivery) {
+
+                                            throw new Exception(
+                                                "Delivery update prepare failed."
+                                            );
+                                        }
+
+
+                                        $updateDelivery->bind_param(
+                                            "si",
+                                            $newDeliveryStatus,
+                                            $deliveryId
+                                        );
+                                    }
+
+
+                                    /* =================================
+                                       EXECUTE DELIVERY UPDATE
+                                    ================================= */
+
+                                    if (
+                                        !$updateDelivery->execute()
+                                    ) {
+
+                                        throw new Exception(
+                                            "Delivery update failed: " .
+                                            $updateDelivery->error
+                                        );
+                                    }
+
+
+                                    $updateDelivery->close();
+
 
                                 } else {
 
-                                    $updateDelivery =
+                                    /* =================================
+                                       4. CREATE DELIVERY RECORD
+                                    ================================= */
+
+                                    $assignedAt = null;
+
+                                    $outForDeliveryAt = null;
+
+                                    $deliveredAt = null;
+
+
+                                    /* =================================
+                                       TIMESTAMPS
+                                    ================================= */
+
+                                    if (
+                                        $newDeliveryStatus ===
+                                        'assigned'
+                                    ) {
+
+                                        $assignedAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'out_for_delivery'
+                                    ) {
+
+                                        $assignedAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+
+                                        $outForDeliveryAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+
+                                    } elseif (
+                                        $newDeliveryStatus ===
+                                        'delivered'
+                                    ) {
+
+                                        $assignedAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+
+                                        $outForDeliveryAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+
+                                        $deliveredAt =
+                                            date(
+                                                'Y-m-d H:i:s'
+                                            );
+                                    }
+
+
+                                    /* =================================
+                                       INSERT DELIVERY
+                                    ================================= */
+
+                                    $insertDelivery =
                                         $conn->prepare(
-                                            "UPDATE deliveries SET
-                                                status = ?,
-                                                updated_at =
-                                                    CURRENT_TIMESTAMP
-                                             WHERE id = ?"
+                                            "INSERT INTO deliveries
+                                            (
+                                                order_id,
+                                                delivery_person_id,
+                                                status,
+                                                assigned_at,
+                                                picked_up_at,
+                                                out_for_delivery_at,
+                                                delivered_at,
+                                                delivery_otp,
+                                                delivery_note,
+                                                failure_reason,
+                                                created_at,
+                                                updated_at
+                                            )
+                                            VALUES
+                                            (
+                                                ?,
+                                                NULL,
+                                                ?,
+                                                ?,
+                                                NULL,
+                                                ?,
+                                                ?,
+                                                NULL,
+                                                NULL,
+                                                NULL,
+                                                CURRENT_TIMESTAMP,
+                                                CURRENT_TIMESTAMP
+                                            )"
                                         );
-                                }
 
 
-                                if (!$updateDelivery) {
+                                    if (!$insertDelivery) {
 
-                                    throw new Exception(
-                                        "Delivery update prepare failed."
-                                    );
-                                }
+                                        throw new Exception(
+                                            "Delivery creation prepare failed: " .
+                                            $conn->error
+                                        );
+                                    }
 
 
-                                if (
-                                    $newDeliveryStatus === 'assigned' ||
-                                    $newDeliveryStatus === 'out_for_delivery' ||
-                                    $newDeliveryStatus === 'delivered' ||
-                                    $newDeliveryStatus === 'cancelled'
-                                ) {
-
-                                    $updateDelivery->bind_param(
-                                        "i",
-                                        $deliveryId
-                                    );
-
-                                } else {
-
-                                    $updateDelivery->bind_param(
-                                        "si",
+                                    $insertDelivery->bind_param(
+                                        "issss",
+                                        $id,
                                         $newDeliveryStatus,
-                                        $deliveryId
-                                    );
-                                }
-
-
-                                if (
-                                    !$updateDelivery->execute()
-                                ) {
-
-                                    throw new Exception(
-                                        "Delivery update failed."
-                                    );
-                                }
-
-
-                                $updateDelivery->close();
-
-
-                            } else {
-
-                                /* =================================
-                                   CREATE DELIVERY RECORD
-                                ================================= */
-
-                                $deliveryId = 0;
-
-                                $insertDelivery =
-                                    $conn->prepare(
-                                        "INSERT INTO deliveries
-                                        (
-                                            order_id,
-                                            delivery_person_id,
-                                            status,
-                                            assigned_at,
-                                            picked_up_at,
-                                            out_for_delivery_at,
-                                            delivered_at,
-                                            delivery_otp,
-                                            delivery_note,
-                                            failure_reason,
-                                            created_at,
-                                            updated_at
-                                        )
-                                        VALUES
-                                        (
-                                            ?,
-                                            NULL,
-                                            ?,
-                                            ?,
-                                            NULL,
-                                            ?,
-                                            ?,
-                                            NULL,
-                                            NULL,
-                                            NULL,
-                                            CURRENT_TIMESTAMP,
-                                            CURRENT_TIMESTAMP
-                                        )"
+                                        $assignedAt,
+                                        $outForDeliveryAt,
+                                        $deliveredAt
                                     );
 
 
-                                if (!$insertDelivery) {
+                                    if (
+                                        !$insertDelivery->execute()
+                                    ) {
 
-                                    throw new Exception(
-                                        "Delivery creation prepare failed."
-                                    );
+                                        throw new Exception(
+                                            "Delivery record could not be created: " .
+                                            $insertDelivery->error
+                                        );
+                                    }
+
+
+                                    $insertDelivery->close();
                                 }
-
-
-                                /*
-                                 * Timestamp handling.
-                                 *
-                                 * For assigned:
-                                 * assigned_at = NOW()
-                                 *
-                                 * For out_for_delivery:
-                                 * assigned_at = NOW()
-                                 * out_for_delivery_at = NOW()
-                                 *
-                                 * For delivered:
-                                 * assigned_at = NOW()
-                                 * out_for_delivery_at = NOW()
-                                 * delivered_at = NOW()
-                                 *
-                                 * For pending/cancelled:
-                                 * relevant timestamps remain NULL.
-                                 */
-
-                                $assignedAt = null;
-                                $outForDeliveryAt = null;
-                                $deliveredAt = null;
-
-
-                                if (
-                                    $newDeliveryStatus ===
-                                    'assigned'
-                                ) {
-
-                                    $assignedAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-
-                                } elseif (
-                                    $newDeliveryStatus ===
-                                    'out_for_delivery'
-                                ) {
-
-                                    $assignedAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-
-                                    $outForDeliveryAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-
-                                } elseif (
-                                    $newDeliveryStatus ===
-                                    'delivered'
-                                ) {
-
-                                    $assignedAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-
-                                    $outForDeliveryAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-
-                                    $deliveredAt =
-                                        date(
-                                            'Y-m-d H:i:s'
-                                        );
-                                }
-
-
-                                $insertDelivery->bind_param(
-                                    "isss",
-                                    $id,
-                                    $newDeliveryStatus,
-                                    $assignedAt,
-                                    $outForDeliveryAt
-                                );
-
-
-                                /*
-                                 * Because delivered_at is the
-                                 * fifth timestamp value, rebuild
-                                 * query if delivered_at required.
-                                 *
-                                 * Use a simpler INSERT below.
-                                 */
-
-                                $insertDelivery->close();
 
 
                                 /* =================================
-                                   CORRECT INSERT
+                                   5. COMMIT
                                 ================================= */
 
-                                $insertDelivery =
-                                    $conn->prepare(
-                                        "INSERT INTO deliveries
-                                        (
-                                            order_id,
-                                            delivery_person_id,
-                                            status,
-                                            assigned_at,
-                                            picked_up_at,
-                                            out_for_delivery_at,
-                                            delivered_at,
-                                            delivery_otp,
-                                            delivery_note,
-                                            failure_reason,
-                                            created_at,
-                                            updated_at
-                                        )
-                                        VALUES
-                                        (
-                                            ?,
-                                            NULL,
-                                            ?,
-                                            ?,
-                                            NULL,
-                                            ?,
-                                            ?,
-                                            NULL,
-                                            NULL,
-                                            NULL,
-                                            CURRENT_TIMESTAMP,
-                                            CURRENT_TIMESTAMP
-                                        )"
-                                    );
+                                $conn->commit();
 
 
-                                if (!$insertDelivery) {
-
-                                    throw new Exception(
-                                        "Delivery creation failed."
-                                    );
-                                }
+                                $message =
+                                    "Order and delivery status updated successfully.";
 
 
-                                $insertDelivery->bind_param(
-                                    "issss",
-                                    $id,
-                                    $newDeliveryStatus,
-                                    $assignedAt,
-                                    $outForDeliveryAt,
-                                    $deliveredAt
-                                );
+                                $action =
+                                    'view';
+
+                                $edit_id =
+                                    $id;
 
 
-                                if (
-                                    !$insertDelivery->execute()
-                                ) {
+                            } catch (Throwable $e) {
 
-                                    throw new Exception(
-                                        "Delivery record could not be created."
-                                    );
-                                }
+                                /* =================================
+                                   ROLLBACK
+                                ================================= */
+
+                                $conn->rollback();
 
 
-                                $insertDelivery->close();
+                                $error =
+                                    $e->getMessage();
+
+
+                                $action =
+                                    'view';
+
+                                $edit_id =
+                                    $id;
                             }
-
-
-                            /* =================================
-                               COMMIT
-                            ================================= */
-
-                            $conn->commit();
-
-                            $message =
-                                "Order and delivery status updated successfully.";
-
-                            $action = 'view';
-
-                            $edit_id = $id;
-
-                        } catch (Throwable $e) {
-
-                            $conn->rollback();
-
-                            $error =
-                                $e->getMessage();
-
-                            $action = 'view';
-
-                            $edit_id = $id;
                         }
                     }
                 }
