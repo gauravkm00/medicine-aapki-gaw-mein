@@ -1,4 +1,3 @@
-```php
 <?php
 
 session_start();
@@ -2771,4 +2770,4 @@ document.addEventListener(
 require_once "includes/footer.php";
 
 ?>
-```
+
