@@ -1,4 +1,3 @@
-```php
 <?php
 
 session_start();
@@ -2015,4 +2014,4 @@ document
 </body>
 
 </html>
-```
+

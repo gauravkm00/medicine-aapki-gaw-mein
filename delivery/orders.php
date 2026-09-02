@@ -1,4 +1,3 @@
-
 <?php
 
 session_start();
@@ -12,7 +11,7 @@ require_once "../config/database.php";
 
 if (
     !isset($_SESSION['user_id'], $_SESSION['role']) ||
-    $_SESSION['role'] !== 'delivery'
+    strtolower((string)$_SESSION['role']) !== 'delivery'
 ) {
     header("Location: login.php");
     exit;
@@ -60,21 +59,22 @@ $status =
 
 
 // =====================================================
-// ALLOWED STATUS
+// ALLOWED DELIVERY STATUSES
 // =====================================================
 
 $allowedStatuses = [
-    'pending',
-    'confirmed',
-    'processing',
-    'ready',
+    'assigned',
+    'picked_up',
     'out_for_delivery',
     'delivered',
+    'failed',
     'cancelled'
 ];
 
 
-// Invalid status remove
+// =====================================================
+// VALIDATE STATUS
+// =====================================================
 
 if (
     $status !== '' &&
@@ -84,86 +84,132 @@ if (
         true
     )
 ) {
-
     $status = '';
-
 }
 
 
 // =====================================================
-// FETCH ORDERS
+// FETCH DELIVERIES / ORDERS
 // =====================================================
 
 $orders = [];
 
 
-// -----------------------------------------------------
+// =====================================================
 // BASE QUERY
-// -----------------------------------------------------
+// =====================================================
+//
+// `deliveries` is the source of truth for delivery workflow.
+//
+// Delivery boy:
+//     deliveries.delivery_person_id
+//
+// Delivery status:
+//     deliveries.status
+//
+// Order/customer information:
+//     orders table
+// =====================================================
 
 $sql = "
     SELECT
-        id,
-        order_number,
-        customer_name,
-        customer_mobile,
-        delivery_address,
-        city,
-        state,
-        pincode,
-        total_amount,
-        payment_method,
-        payment_status,
-        order_status,
-        created_at
-    FROM orders
-    WHERE delivery_boy_id = ?
+
+        /* =========================
+           DELIVERY DATA
+        ========================= */
+
+        d.id AS delivery_id,
+        d.order_id,
+        d.delivery_person_id,
+
+        d.status AS delivery_status,
+
+        d.assigned_at,
+        d.picked_up_at,
+        d.out_for_delivery_at,
+        d.delivered_at,
+
+        d.delivery_note,
+        d.failure_reason,
+
+        /* =========================
+           ORDER DATA
+        ========================= */
+
+        o.id AS order_id,
+
+        o.order_number,
+
+        o.customer_name,
+        o.customer_mobile,
+
+        o.delivery_address,
+        o.city,
+        o.state,
+        o.pincode,
+
+        o.total_amount,
+
+        o.payment_method,
+        o.payment_status,
+
+        o.order_status,
+
+        o.created_at
+
+    FROM deliveries d
+
+    INNER JOIN orders o
+        ON o.id = d.order_id
+
+    WHERE
+        d.delivery_person_id = ?
 ";
 
 
-// -----------------------------------------------------
-// SEARCH
-// -----------------------------------------------------
+// =====================================================
+// SEARCH FILTER
+// =====================================================
 
 if ($search !== '') {
 
     $sql .= "
         AND (
-            order_number LIKE ?
-            OR customer_name LIKE ?
-            OR customer_mobile LIKE ?
-            OR delivery_address LIKE ?
-            OR city LIKE ?
+            o.order_number LIKE ?
+            OR o.customer_name LIKE ?
+            OR o.customer_mobile LIKE ?
+            OR o.delivery_address LIKE ?
+            OR o.city LIKE ?
+            OR o.state LIKE ?
+            OR o.pincode LIKE ?
         )
     ";
-
 }
 
 
-// -----------------------------------------------------
-// STATUS FILTER
-// -----------------------------------------------------
+// =====================================================
+// DELIVERY STATUS FILTER
+// =====================================================
 
 if ($status !== '') {
 
     $sql .= "
-        AND order_status = ?
+        AND d.status = ?
     ";
-
 }
 
 
-// -----------------------------------------------------
+// =====================================================
 // ORDER BY
-// -----------------------------------------------------
+// =====================================================
 
 $sql .= "
-    ORDER BY id DESC
+    ORDER BY d.id DESC
 ";
 
 
 // =====================================================
-// PREPARE
+// PREPARE STATEMENT
 // =====================================================
 
 $stmt =
@@ -174,11 +220,14 @@ $stmt =
 
 
 // =====================================================
-// BIND PARAMETERS
+// EXECUTE QUERY
 // =====================================================
 
 if ($stmt) {
 
+    // =================================================
+    // SEARCH + STATUS
+    // =================================================
 
     if (
         $search !== '' &&
@@ -190,8 +239,10 @@ if ($stmt) {
 
         mysqli_stmt_bind_param(
             $stmt,
-            "issssss",
+            "issssssss",
             $deliveryBoyId,
+            $searchValue,
+            $searchValue,
             $searchValue,
             $searchValue,
             $searchValue,
@@ -199,8 +250,11 @@ if ($stmt) {
             $searchValue,
             $status
         );
-
     }
+
+    // =================================================
+    // SEARCH ONLY
+    // =================================================
 
     elseif ($search !== '') {
 
@@ -209,16 +263,21 @@ if ($stmt) {
 
         mysqli_stmt_bind_param(
             $stmt,
-            "isssss",
+            "isssssss",
             $deliveryBoyId,
+            $searchValue,
+            $searchValue,
             $searchValue,
             $searchValue,
             $searchValue,
             $searchValue,
             $searchValue
         );
-
     }
+
+    // =================================================
+    // STATUS ONLY
+    // =================================================
 
     elseif ($status !== '') {
 
@@ -228,8 +287,11 @@ if ($stmt) {
             $deliveryBoyId,
             $status
         );
-
     }
+
+    // =================================================
+    // NO FILTER
+    // =================================================
 
     else {
 
@@ -238,42 +300,39 @@ if ($stmt) {
             "i",
             $deliveryBoyId
         );
-
     }
 
 
-    // -------------------------------------------------
+    // =================================================
     // EXECUTE
-    // -------------------------------------------------
+    // =================================================
 
-    mysqli_stmt_execute($stmt);
+    if (
+        mysqli_stmt_execute($stmt)
+    ) {
 
+        $result =
+            mysqli_stmt_get_result($stmt);
 
-    $result =
-        mysqli_stmt_get_result($stmt);
+        if ($result) {
 
+            while (
+                $row =
+                mysqli_fetch_assoc($result)
+            ) {
 
-    if ($result) {
-
-        while (
-            $row =
-            mysqli_fetch_assoc($result)
-        ) {
-
-            $orders[] = $row;
-
+                $orders[] = $row;
+            }
         }
-
     }
 
 
     mysqli_stmt_close($stmt);
-
 }
 
 
 // =====================================================
-// COUNTS
+// TOTAL ORDERS
 // =====================================================
 
 $totalOrders =
@@ -1090,7 +1149,7 @@ a {
 }
 
 
-.status-pending {
+.status-assigned {
 
     background: #fff7df;
 
@@ -1099,29 +1158,11 @@ a {
 }
 
 
-.status-confirmed {
+.status-picked_up {
 
-    background: #edf5ff;
+    background: #eef4ff;
 
-    color: #2766a3;
-
-}
-
-
-.status-processing {
-
-    background: #f0efff;
-
-    color: #5a4eb0;
-
-}
-
-
-.status-ready {
-
-    background: #fff1e7;
-
-    color: #a65a18;
+    color: #315ea8;
 
 }
 
@@ -1140,6 +1181,15 @@ a {
     background: #e6f7eb;
 
     color: #197333;
+
+}
+
+
+.status-failed {
+
+    background: #fff0f1;
+
+    color: #b42318;
 
 }
 
@@ -1620,7 +1670,7 @@ a {
     <div class="form-group">
 
         <label for="status">
-            Order Status
+            Delivery Status
         </label>
 
 
@@ -1713,7 +1763,10 @@ a {
 
         <span>
 
-            <?php if ($search !== '' || $status !== ''): ?>
+            <?php if (
+                $search !== '' ||
+                $status !== ''
+            ): ?>
 
                 Filtered Results
 
@@ -1783,11 +1836,15 @@ a {
 
                 <?php
 
-                $orderStatus =
+                // =================================================
+                // DELIVERY STATUS
+                // =================================================
+
+                $deliveryStatus =
                     strtolower(
                         trim(
-                            $order['order_status']
-                            ?? 'pending'
+                            $order['delivery_status']
+                            ?? 'assigned'
                         )
                     );
 
@@ -1797,7 +1854,7 @@ a {
                     str_replace(
                         ' ',
                         '_',
-                        $orderStatus
+                        $deliveryStatus
                     );
 
 
@@ -1806,10 +1863,14 @@ a {
                         str_replace(
                             '_',
                             ' ',
-                            $orderStatus
+                            $deliveryStatus
                         )
                     );
 
+
+                // =================================================
+                // PAYMENT STATUS
+                // =================================================
 
                 $paymentStatus =
                     strtolower(
@@ -1825,6 +1886,10 @@ a {
                     $paymentStatus;
 
 
+                // =================================================
+                // PAYMENT METHOD
+                // =================================================
+
                 $paymentMethod =
                     strtoupper(
                         $order['payment_method']
@@ -1837,7 +1902,9 @@ a {
                 <tr>
 
 
-                    <!-- ORDER -->
+                    <!-- =================================================
+                         ORDER
+                    ================================================= -->
 
                     <td>
 
@@ -1846,7 +1913,7 @@ a {
 
                             #<?= e(
                                 $order['order_number']
-                                ?? $order['id']
+                                ?? $order['order_id']
                             ) ?>
 
                         </div>
@@ -1869,7 +1936,9 @@ a {
                     </td>
 
 
-                    <!-- CUSTOMER -->
+                    <!-- =================================================
+                         CUSTOMER
+                    ================================================= -->
 
                     <td>
 
@@ -1887,6 +1956,7 @@ a {
                         <div class="customer-mobile">
 
                             📱
+
                             <?= e(
                                 $order['customer_mobile']
                                 ?? 'N/A'
@@ -1898,7 +1968,9 @@ a {
                     </td>
 
 
-                    <!-- ADDRESS -->
+                    <!-- =================================================
+                         ADDRESS
+                    ================================================= -->
 
                     <td>
 
@@ -1951,7 +2023,9 @@ a {
                     </td>
 
 
-                    <!-- AMOUNT -->
+                    <!-- =================================================
+                         AMOUNT
+                    ================================================= -->
 
                     <td>
 
@@ -1972,7 +2046,9 @@ a {
                     </td>
 
 
-                    <!-- PAYMENT -->
+                    <!-- =================================================
+                         PAYMENT
+                    ================================================= -->
 
                     <td>
 
@@ -2011,7 +2087,9 @@ a {
                     </td>
 
 
-                    <!-- STATUS -->
+                    <!-- =================================================
+                         DELIVERY STATUS
+                    ================================================= -->
 
                     <td>
 
@@ -2031,13 +2109,15 @@ a {
                     </td>
 
 
-                    <!-- ACTION -->
+                    <!-- =================================================
+                         ACTION
+                    ================================================= -->
 
                     <td>
 
 
                         <a
-                            href="order-details.php?id=<?= (int)$order['id'] ?>"
+                            href="order-details.php?id=<?= (int)$order['order_id'] ?>&delivery_id=<?= (int)$order['delivery_id'] ?>"
                             class="view-btn"
                         >
 
@@ -2098,7 +2178,7 @@ a {
                 ): ?>
 
                     Try changing your search
-                    or status filter.
+                    or delivery status filter.
 
                 <?php else: ?>
 
@@ -2134,4 +2214,3 @@ a {
 </body>
 
 </html>
-```

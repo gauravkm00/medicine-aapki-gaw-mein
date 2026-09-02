@@ -39,6 +39,50 @@ function e($value)
 }
 
 
+// =====================================================
+// ALLOWED STATUSES
+// =====================================================
+
+$allowedStatuses = [
+    'pending',
+    'assigned',
+    'picked_up',
+    'in_transit',
+    'out_for_delivery',
+    'delivered',
+    'cancelled',
+    'failed'
+];
+
+
+// =====================================================
+// CONTACT MESSAGE COUNT
+// =====================================================
+
+$contactCount = 0;
+
+$contactSql = "
+    SELECT COUNT(*) AS total
+    FROM contact_messages
+    WHERE status IN ('new', 'unread', 'pending')
+";
+
+$contactResult = mysqli_query($conn, $contactSql);
+
+if ($contactResult) {
+
+    $contactRow = mysqli_fetch_assoc($contactResult);
+
+    $contactCount = (int) (
+        $contactRow['total'] ?? 0
+    );
+}
+
+
+// =====================================================
+// COUNT HELPER
+// =====================================================
+
 function getCount($conn, $sql)
 {
     $result = mysqli_query($conn, $sql);
@@ -54,36 +98,6 @@ function getCount($conn, $sql)
 
     return 0;
 }
-
-
-// =====================================================
-// DATABASE STATUS VALUES
-// IMPORTANT: MATCHES deliveries ENUM EXACTLY
-// =====================================================
-
-$allowedStatuses = [
-    'pending',
-    'assigned',
-    'picked_up',
-    'out_for_delivery',
-    'delivered',
-    'failed',
-    'cancelled'
-];
-
-
-// =====================================================
-// CONTACT MESSAGE COUNT
-// =====================================================
-
-$contactCount = getCount(
-    $conn,
-    "
-    SELECT COUNT(*) AS total
-    FROM contact_messages
-    WHERE status IN ('new', 'unread', 'pending')
-    "
-);
 
 
 // =====================================================
@@ -119,6 +133,15 @@ $pickupDeliveries = getCount(
     SELECT COUNT(*) AS total
     FROM deliveries
     WHERE status = 'picked_up'
+    "
+);
+
+$inTransitDeliveries = getCount(
+    $conn,
+    "
+    SELECT COUNT(*) AS total
+    FROM deliveries
+    WHERE status = 'in_transit'
     "
 );
 
@@ -198,18 +221,13 @@ if (
 
     } else {
 
+
         // -------------------------------------------------
-        // GET CURRENT DELIVERY
+        // CHECK DELIVERY
         // -------------------------------------------------
 
         $checkSql = "
-            SELECT
-                id,
-                status,
-                assigned_at,
-                picked_up_at,
-                out_for_delivery_at,
-                delivered_at
+            SELECT id, status
             FROM deliveries
             WHERE id = ?
             LIMIT 1
@@ -223,8 +241,7 @@ if (
 
         if (!$checkStmt) {
 
-            $message =
-                "Database error: " .
+            $message = "Database error: " .
                 mysqli_error($conn);
 
             $messageType = "error";
@@ -259,17 +276,9 @@ if (
 
             } else {
 
-                $currentDelivery =
-                    mysqli_fetch_assoc(
-                        $checkResult
-                    );
-
-                $oldStatus =
-                    $currentDelivery['status'] ?? 'pending';
-
 
                 // -------------------------------------------------
-                // BUILD UPDATE QUERY
+                // UPDATE BASE STATUS
                 // -------------------------------------------------
 
                 $updateSql = "
@@ -281,39 +290,11 @@ if (
                 ";
 
 
-                /*
-                 * IMPORTANT
-                 *
-                 * Each timestamp is saved only once.
-                 * Existing timestamps are preserved.
-                 */
-
-
                 // -------------------------------------------------
-                // ASSIGNED
+                // STATUS-SPECIFIC TIMESTAMPS
                 // -------------------------------------------------
 
-                if ($newStatus === 'assigned') {
-
-                    $updateSql = "
-                        UPDATE deliveries
-                        SET
-                            status = ?,
-                            assigned_at = COALESCE(
-                                assigned_at,
-                                NOW()
-                            ),
-                            updated_at = NOW()
-                        WHERE id = ?
-                    ";
-                }
-
-
-                // -------------------------------------------------
-                // PICKED UP
-                // -------------------------------------------------
-
-                elseif ($newStatus === 'picked_up') {
+                if ($newStatus === 'picked_up') {
 
                     $updateSql = "
                         UPDATE deliveries
@@ -326,14 +307,8 @@ if (
                             updated_at = NOW()
                         WHERE id = ?
                     ";
-                }
 
-
-                // -------------------------------------------------
-                // OUT FOR DELIVERY
-                // -------------------------------------------------
-
-                elseif (
+                } elseif (
                     $newStatus === 'out_for_delivery'
                 ) {
 
@@ -348,14 +323,10 @@ if (
                             updated_at = NOW()
                         WHERE id = ?
                     ";
-                }
 
-
-                // -------------------------------------------------
-                // DELIVERED
-                // -------------------------------------------------
-
-                elseif ($newStatus === 'delivered') {
+                } elseif (
+                    $newStatus === 'delivered'
+                ) {
 
                     $updateSql = "
                         UPDATE deliveries
@@ -368,11 +339,12 @@ if (
                             updated_at = NOW()
                         WHERE id = ?
                     ";
+
                 }
 
 
                 // -------------------------------------------------
-                // EXECUTE
+                // EXECUTE UPDATE
                 // -------------------------------------------------
 
                 $stmt = mysqli_prepare(
@@ -400,29 +372,31 @@ if (
 
 
                     if (
-                        mysqli_stmt_execute($stmt)
+                        mysqli_stmt_execute(
+                            $stmt
+                        )
                     ) {
 
                         $message =
-                            "Delivery #" .
-                            $deliveryId .
-                            " status updated to " .
-                            ucwords(
+                            "Delivery #"
+                            . $deliveryId
+                            . " status updated to "
+                            . ucwords(
                                 str_replace(
                                     '_',
                                     ' ',
                                     $newStatus
                                 )
-                            ) .
-                            ".";
+                            )
+                            . ".";
 
                         $messageType = "success";
 
                     } else {
 
                         $message =
-                            "Unable to update delivery status: " .
-                            mysqli_stmt_error($stmt);
+                            "Unable to update delivery status: "
+                            . mysqli_stmt_error($stmt);
 
                         $messageType = "error";
                     }
@@ -433,19 +407,24 @@ if (
             }
 
 
-            mysqli_stmt_close($checkStmt);
+            mysqli_stmt_close(
+                $checkStmt
+            );
         }
     }
 
 
     // -------------------------------------------------
-    // REDIRECT AFTER SUCCESS
+    // REDIRECT TO PREVENT RESUBMISSION
     // -------------------------------------------------
 
     if ($messageType === 'success') {
 
+        $redirectUrl =
+            "deliveries.php?updated=1";
+
         header(
-            "Location: deliveries.php?updated=1"
+            "Location: " . $redirectUrl
         );
 
         exit;
@@ -454,12 +433,12 @@ if (
 
 
 // =====================================================
-// SUCCESS MESSAGE
+// SUCCESS MESSAGE AFTER REDIRECT
 // =====================================================
 
 if (
     isset($_GET['updated']) &&
-    $_GET['updated'] === '1'
+    $_GET['updated'] == '1'
 ) {
 
     $message =
@@ -488,22 +467,20 @@ $statusFilter = trim(
 
 $deliveries = [];
 
+
 $sql = "
     SELECT
         d.id,
         d.order_id,
         d.delivery_person_id,
         d.status,
-
         d.assigned_at,
         d.picked_up_at,
         d.out_for_delivery_at,
         d.delivered_at,
-
         d.delivery_otp,
         d.delivery_note,
         d.failure_reason,
-
         d.created_at,
         d.updated_at,
 
@@ -554,6 +531,7 @@ if ($search !== '') {
             $searchValue;
     }
 
+
     $types .= 'ssssss';
 }
 
@@ -593,7 +571,7 @@ $sql .= "
 
 
 // =====================================================
-// EXECUTE
+// EXECUTE QUERY
 // =====================================================
 
 if (!empty($params)) {
@@ -635,16 +613,17 @@ if (!empty($params)) {
         }
 
 
-        mysqli_stmt_close($stmt);
+        mysqli_stmt_close(
+            $stmt
+        );
     }
 
 } else {
 
-    $result =
-        mysqli_query(
-            $conn,
-            $sql
-        );
+    $result = mysqli_query(
+        $conn,
+        $sql
+    );
 
 
     if ($result) {
@@ -686,10 +665,12 @@ $pageTitle = "Deliveries";
     Medicine Aapki Gaw Mein
 </title>
 
+
 <link
     href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap"
     rel="stylesheet"
 >
+
 
 <style>
 
@@ -703,9 +684,11 @@ $pageTitle = "Deliveries";
     box-sizing: border-box;
 }
 
+
 html {
     scroll-behavior: smooth;
 }
+
 
 body {
     font-family: "Rubik", Arial, sans-serif;
@@ -713,15 +696,26 @@ body {
     color: #27313a;
 }
 
+
 a {
     text-decoration: none;
     color: inherit;
 }
 
+
 button,
 input,
 select {
     font-family: inherit;
+}
+
+
+/* =====================================================
+   LAYOUT
+===================================================== */
+
+.admin-wrapper {
+    min-height: 100vh;
 }
 
 
@@ -743,15 +737,22 @@ select {
         );
 
     color: #fff;
+
     overflow-y: auto;
 
-    transition: transform .28s ease;
+    transition:
+        transform .28s ease;
 }
+
 
 .sidebar-brand {
     padding: 25px 22px;
-    border-bottom: 1px solid rgba(255,255,255,.12);
+
+    border-bottom:
+        1px solid
+        rgba(255,255,255,.12);
 }
+
 
 .brand-top {
     display: flex;
@@ -759,9 +760,11 @@ select {
     gap: 12px;
 }
 
+
 .brand-icon {
     width: 45px;
     height: 45px;
+
     flex-shrink: 0;
 
     border-radius: 12px;
@@ -770,9 +773,12 @@ select {
     align-items: center;
     justify-content: center;
 
-    background: rgba(255,255,255,.15);
+    background:
+        rgba(255,255,255,.15);
+
     font-size: 23px;
 }
+
 
 .sidebar-brand h2 {
     font-size: 15px;
@@ -780,36 +786,55 @@ select {
     font-weight: 700;
 }
 
+
 .sidebar-brand p {
     font-size: 10px;
-    color: rgba(255,255,255,.65);
+
+    color:
+        rgba(255,255,255,.65);
+
     margin-top: 4px;
 }
+
 
 .sidebar-menu {
     padding: 17px 12px 25px;
 }
 
+
 .menu-title {
-    color: rgba(255,255,255,.5);
+    color:
+        rgba(255,255,255,.5);
+
     font-size: 9px;
+
     text-transform: uppercase;
+
     letter-spacing: 1.1px;
-    padding: 12px 12px 8px;
+
+    padding:
+        12px 12px 8px;
 }
+
 
 .sidebar-menu a {
     display: flex;
+
     align-items: center;
+
     gap: 11px;
 
-    padding: 11px 13px;
+    padding:
+        11px 13px;
+
     margin-bottom: 4px;
 
     border-radius: 9px;
 
     font-size: 12px;
-    color: rgba(255,255,255,.84);
+
+    color:
+        rgba(255,255,255,.84);
 
     transition:
         background .2s,
@@ -817,17 +842,28 @@ select {
         transform .2s;
 }
 
+
 .sidebar-menu a:hover {
-    background: rgba(255,255,255,.11);
+    background:
+        rgba(255,255,255,.11);
+
     color: #fff;
-    transform: translateX(2px);
+
+    transform:
+        translateX(2px);
 }
 
+
 .sidebar-menu a.active {
-    background: rgba(255,255,255,.18);
+    background:
+        rgba(255,255,255,.18);
+
     color: #fff;
-    box-shadow: inset 3px 0 0 #fff;
+
+    box-shadow:
+        inset 3px 0 0 #fff;
 }
+
 
 .menu-icon {
     width: 25px;
@@ -835,9 +871,12 @@ select {
     font-size: 15px;
 }
 
+
 .menu-badge {
     margin-left: auto;
+
     min-width: 20px;
+
     padding: 3px 6px;
 
     text-align: center;
@@ -845,9 +884,11 @@ select {
     border-radius: 20px;
 
     background: #fff;
+
     color: #238b3c;
 
     font-size: 8px;
+
     font-weight: 700;
 }
 
@@ -871,24 +912,31 @@ select {
 
     position: sticky;
     top: 0;
+
     z-index: 100;
 
     background: #fff;
 
-    border-bottom: 1px solid #e9edf3;
+    border-bottom:
+        1px solid #e9edf3;
 
-    padding: 0 28px;
+    padding:
+        0 28px;
 
     display: flex;
+
     align-items: center;
+
     justify-content: space-between;
 }
+
 
 .topbar-left {
     display: flex;
     align-items: center;
     gap: 12px;
 }
+
 
 .mobile-menu-btn {
     display: none;
@@ -897,9 +945,11 @@ select {
     height: 38px;
 
     border: 0;
+
     border-radius: 9px;
 
     background: #eaf7ec;
+
     color: #238b3c;
 
     cursor: pointer;
@@ -907,11 +957,13 @@ select {
     font-size: 18px;
 }
 
+
 .topbar-title h1 {
     font-size: 19px;
     color: #222;
     font-weight: 600;
 }
+
 
 .topbar-title p {
     color: #9ba2a8;
@@ -919,11 +971,13 @@ select {
     margin-top: 3px;
 }
 
+
 .admin-profile {
     display: flex;
     align-items: center;
     gap: 10px;
 }
+
 
 .admin-avatar {
     width: 39px;
@@ -936,22 +990,31 @@ select {
     justify-content: center;
 
     background: #e8f7eb;
+
     color: #238b3c;
 
     font-size: 14px;
+
     font-weight: 700;
 }
 
+
 .admin-info strong {
     display: block;
+
     font-size: 12px;
+
     color: #333;
 }
 
+
 .admin-info span {
     display: block;
+
     margin-top: 2px;
+
     color: #999;
+
     font-size: 9px;
 }
 
@@ -971,27 +1034,38 @@ select {
 
 .page-header {
     display: flex;
+
     align-items: center;
+
     justify-content: space-between;
 
     gap: 15px;
+
     margin-bottom: 20px;
 }
 
+
 .page-header h2 {
     color: #222;
+
     font-size: 21px;
+
     font-weight: 600;
 }
 
+
 .page-header p {
     color: #999;
+
     font-size: 11px;
+
     margin-top: 5px;
 }
 
+
 .page-date {
     color: #8d959c;
+
     font-size: 10px;
 
     background: #fff;
@@ -1010,6 +1084,7 @@ select {
 
 .alert {
     display: flex;
+
     align-items: center;
 
     min-height: 43px;
@@ -1023,15 +1098,21 @@ select {
     font-size: 11px;
 }
 
+
 .alert-success {
     color: #1d7330;
+
     background: #eaf8ed;
+
     border: 1px solid #ccebd2;
 }
 
+
 .alert-error {
     color: #a3212e;
+
     background: #ffeaed;
+
     border: 1px solid #f5c9ce;
 }
 
@@ -1042,21 +1123,27 @@ select {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
     gap: 14px;
 
     margin-bottom: 20px;
 }
 
+
 .stat-card {
     background: #fff;
 
     border: 1px solid #edf0f4;
+
     border-radius: 12px;
 
     padding: 16px;
 
     display: flex;
+
     align-items: center;
 
     gap: 13px;
@@ -1066,12 +1153,16 @@ select {
         box-shadow .2s;
 }
 
+
 .stat-card:hover {
-    transform: translateY(-2px);
+    transform:
+        translateY(-2px);
 
     box-shadow:
-        0 8px 24px rgba(0,0,0,.055);
+        0 8px 24px
+        rgba(0,0,0,.055);
 }
+
 
 .stat-icon {
     width: 46px;
@@ -1082,37 +1173,49 @@ select {
     border-radius: 11px;
 
     display: flex;
+
     align-items: center;
+
     justify-content: center;
 
     font-size: 19px;
 }
 
+
 .icon-blue {
     background: #eaf3ff;
 }
+
 
 .icon-orange {
     background: #fff3e4;
 }
 
+
 .icon-purple {
     background: #f1eaff;
 }
+
 
 .icon-green {
     background: #e9f8ec;
 }
 
+
 .stat-card h3 {
     color: #222;
+
     font-size: 20px;
+
     line-height: 1;
+
     margin-bottom: 5px;
 }
 
+
 .stat-card p {
     color: #9b9fa4;
+
     font-size: 9px;
 }
 
@@ -1125,12 +1228,14 @@ select {
     background: #fff;
 
     border: 1px solid #edf0f4;
+
     border-radius: 12px;
 
     padding: 16px;
 
     margin-bottom: 18px;
 }
+
 
 .filter-form {
     display: grid;
@@ -1146,6 +1251,7 @@ select {
     align-items: end;
 }
 
+
 .form-group label {
     display: block;
 
@@ -1158,15 +1264,19 @@ select {
     margin-bottom: 6px;
 }
 
+
 .form-control {
     width: 100%;
+
     height: 39px;
 
-    border: 1px solid #dfe4ea;
+    border:
+        1px solid #dfe4ea;
 
     border-radius: 8px;
 
     background: #fff;
+
     color: #333;
 
     padding: 0 11px;
@@ -1174,7 +1284,10 @@ select {
     font-size: 11px;
 
     outline: none;
+
+    transition: .2s;
 }
+
 
 .form-control:focus {
     border-color: #51b848;
@@ -1184,10 +1297,12 @@ select {
         rgba(81,184,72,.08);
 }
 
+
 .btn {
     height: 39px;
 
     border: 0;
+
     border-radius: 8px;
 
     padding: 0 16px;
@@ -1195,27 +1310,35 @@ select {
     display: inline-flex;
 
     align-items: center;
+
     justify-content: center;
 
     cursor: pointer;
 
     font-size: 10px;
+
     font-weight: 600;
+
+    transition: .2s;
 }
+
 
 .btn-primary {
     background: #278c3c;
     color: #fff;
 }
 
+
 .btn-primary:hover {
     background: #1f7932;
 }
+
 
 .btn-light {
     background: #f1f3f5;
     color: #555;
 }
+
 
 .btn-light:hover {
     background: #e6e9ec;
@@ -1230,23 +1353,28 @@ select {
     background: #fff;
 
     border: 1px solid #edf0f4;
+
     border-radius: 12px;
 
     overflow: hidden;
 }
+
 
 .panel-header {
     min-height: 57px;
 
     padding: 0 18px;
 
-    border-bottom: 1px solid #edf0f4;
+    border-bottom:
+        1px solid #edf0f4;
 
     display: flex;
 
     align-items: center;
+
     justify-content: space-between;
 }
+
 
 .panel-header h3 {
     color: #252a2e;
@@ -1256,8 +1384,10 @@ select {
     font-weight: 600;
 }
 
+
 .panel-header span {
     color: #999;
+
     font-size: 9px;
 }
 
@@ -1268,15 +1398,21 @@ select {
 
 .table-wrapper {
     width: 100%;
+
     overflow-x: auto;
+
     scrollbar-width: thin;
 }
 
+
 table {
     width: 100%;
+
     min-width: 1250px;
+
     border-collapse: collapse;
 }
+
 
 th {
     padding: 12px 13px;
@@ -1296,10 +1432,12 @@ th {
     white-space: nowrap;
 }
 
+
 td {
     padding: 12px 13px;
 
-    border-top: 1px solid #f0f2f5;
+    border-top:
+        1px solid #f0f2f5;
 
     color: #454b50;
 
@@ -1308,71 +1446,104 @@ td {
     vertical-align: middle;
 }
 
+
+tbody tr {
+    transition:
+        background .15s;
+}
+
+
 tbody tr:hover {
     background: #fbfdfb;
 }
 
+
 .delivery-id {
     font-weight: 700;
+
     color: #555;
 }
 
+
 .order-number {
     color: #278c3c;
+
     font-weight: 700;
 }
+
 
 .customer-name {
     color: #333;
+
     font-size: 10px;
+
     font-weight: 600;
 }
+
 
 .customer-mobile {
     color: #999;
+
     font-size: 8px;
+
     margin-top: 3px;
 }
+
 
 .amount {
     color: #333;
+
     font-size: 10px;
+
     font-weight: 700;
 }
 
+
 .payment-status {
     font-size: 8px;
+
     margin-top: 3px;
+
     color: #999;
 }
+
 
 .delivery-person {
     color: #333;
+
     font-size: 10px;
+
     font-weight: 600;
 }
 
+
 .delivery-person small {
     display: block;
+
     color: #999;
+
     font-size: 8px;
+
     margin-top: 3px;
 }
 
+
 .not-assigned {
     color: #aaa;
+
     font-size: 9px;
 }
 
 
 /* =====================================================
-   BADGES
+   STATUS BADGES
 ===================================================== */
 
 .badge {
     display: inline-flex;
 
     align-items: center;
+
     justify-content: center;
 
     min-height: 23px;
@@ -1390,38 +1561,59 @@ tbody tr:hover {
     text-transform: capitalize;
 }
 
+
 .badge-pending {
     color: #956800;
+
     background: #fff4d1;
 }
 
+
 .badge-assigned {
     color: #236aa0;
+
     background: #e4f1ff;
 }
 
+
 .badge-picked_up {
     color: #6241a1;
+
     background: #eee8ff;
 }
 
+
+.badge-in_transit {
+    color: #17639b;
+
+    background: #e0f0ff;
+}
+
+
 .badge-out_for_delivery {
     color: #087a58;
+
     background: #d9f7ec;
 }
 
+
 .badge-delivered {
     color: #187432;
+
     background: #def4e3;
 }
 
+
 .badge-cancelled {
     color: #a32936;
+
     background: #ffe3e6;
 }
 
+
 .badge-failed {
     color: #fff;
+
     background: #c0392b;
 }
 
@@ -1432,15 +1624,20 @@ tbody tr:hover {
 
 .status-form {
     display: flex;
+
     align-items: center;
+
     gap: 5px;
 }
 
+
 .status-select {
     width: 145px;
+
     height: 31px;
 
-    border: 1px solid #dfe4ea;
+    border:
+        1px solid #dfe4ea;
 
     border-radius: 6px;
 
@@ -1455,9 +1652,11 @@ tbody tr:hover {
     outline: none;
 }
 
+
 .status-select:focus {
     border-color: #51b848;
 }
+
 
 .update-btn {
     height: 31px;
@@ -1479,6 +1678,7 @@ tbody tr:hover {
     font-weight: 600;
 }
 
+
 .update-btn:hover {
     background: #1f7932;
 }
@@ -1493,8 +1693,9 @@ tbody tr:hover {
 
     font-size: 8px;
 
-    line-height: 1.6;
+    line-height: 1.5;
 }
+
 
 .time-info strong {
     color: #555;
@@ -1507,8 +1708,10 @@ tbody tr:hover {
 
 .created-date {
     color: #777;
+
     font-size: 9px;
 }
+
 
 .created-time {
     color: #aaa;
@@ -1533,11 +1736,13 @@ tbody tr:hover {
     color: #aaa;
 }
 
+
 .empty-icon {
     width: 58px;
     height: 58px;
 
-    margin: 0 auto 12px;
+    margin:
+        0 auto 12px;
 
     border-radius: 50%;
 
@@ -1546,10 +1751,12 @@ tbody tr:hover {
     display: flex;
 
     align-items: center;
+
     justify-content: center;
 
     font-size: 27px;
 }
+
 
 .empty-state strong {
     display: block;
@@ -1559,8 +1766,10 @@ tbody tr:hover {
     font-size: 12px;
 }
 
+
 .empty-state p {
     margin-top: 5px;
+
     font-size: 9px;
 }
 
@@ -1575,6 +1784,7 @@ tbody tr:hover {
     grid-template-columns:
         repeat(4, 1fr);
 }
+
 
 .summary-item {
     padding: 17px 20px;
@@ -1591,13 +1801,22 @@ tbody tr:hover {
     gap: 10px;
 }
 
+
+.summary-item:last-child {
+    border-right: 0;
+}
+
+
 .summary-item span {
     color: #777;
+
     font-size: 10px;
 }
 
+
 .summary-item strong {
     color: #278c3c;
+
     font-size: 16px;
 }
 
@@ -1615,7 +1834,8 @@ tbody tr:hover {
 
     z-index: 900;
 
-    background: rgba(0,0,0,.35);
+    background:
+        rgba(0,0,0,.35);
 }
 
 
@@ -1644,8 +1864,7 @@ tbody tr:hover {
             repeat(2, 1fr);
     }
 
-    .summary-item:nth-child(2),
-    .summary-item:nth-child(4) {
+    .summary-item:nth-child(2) {
         border-right: 0;
     }
 
@@ -1739,11 +1958,13 @@ tbody tr:hover {
 
     .page-date {
         width: 100%;
+
         text-align: center;
     }
 
     .stats-grid {
         grid-template-columns: 1fr;
+
         gap: 10px;
     }
 
@@ -1772,8 +1993,7 @@ tbody tr:hover {
     }
 
     .summary-item,
-    .summary-item:nth-child(2),
-    .summary-item:nth-child(4) {
+    .summary-item:nth-child(2) {
         border-right: 0;
 
         border-bottom:
@@ -1782,6 +2002,10 @@ tbody tr:hover {
 
     .summary-item:last-child {
         border-bottom: 0;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
     }
 }
 
@@ -1813,7 +2037,9 @@ tbody tr:hover {
 
 </head>
 
+
 <body>
+
 
 <div class="admin-wrapper">
 
@@ -1854,6 +2080,7 @@ tbody tr:hover {
 
 
     <nav class="sidebar-menu">
+
 
         <div class="menu-title">
             Main Menu
@@ -1928,9 +2155,11 @@ tbody tr:hover {
             <?php if ($pendingDeliveries > 0): ?>
 
                 <span class="menu-badge">
+
                     <?= number_format(
                         $pendingDeliveries
                     ) ?>
+
                 </span>
 
             <?php endif; ?>
@@ -1977,9 +2206,11 @@ tbody tr:hover {
             <?php if ($contactCount > 0): ?>
 
                 <span class="menu-badge">
+
                     <?= number_format(
                         $contactCount
                     ) ?>
+
                 </span>
 
             <?php endif; ?>
@@ -2017,6 +2248,7 @@ tbody tr:hover {
 
         </a>
 
+
     </nav>
 
 </aside>
@@ -2046,7 +2278,9 @@ tbody tr:hover {
 
 <header class="topbar">
 
+
     <div class="topbar-left">
+
 
         <button
             type="button"
@@ -2055,6 +2289,7 @@ tbody tr:hover {
         >
             ☰
         </button>
+
 
         <div class="topbar-title">
 
@@ -2068,10 +2303,12 @@ tbody tr:hover {
 
         </div>
 
+
     </div>
 
 
     <div class="admin-profile">
+
 
         <div class="admin-avatar">
 
@@ -2100,7 +2337,9 @@ tbody tr:hover {
 
         </div>
 
+
     </div>
+
 
 </header>
 
@@ -2130,7 +2369,9 @@ tbody tr:hover {
 
 
         <div class="page-date">
+
             <?= date("l, d M Y") ?>
+
         </div>
 
     </div>
@@ -2147,7 +2388,9 @@ tbody tr:hover {
                 : 'alert-error'
             ?>"
         >
+
             <?= e($message) ?>
+
         </div>
 
     <?php endif; ?>
@@ -2209,19 +2452,19 @@ tbody tr:hover {
         <div class="stat-card">
 
             <div class="stat-icon icon-purple">
-                📦
+                🚛
             </div>
 
             <div>
 
                 <h3>
                     <?= number_format(
-                        $outForDelivery
+                        $inTransitDeliveries
                     ) ?>
                 </h3>
 
                 <p>
-                    Out for Delivery
+                    In Transit
                 </p>
 
             </div>
@@ -2261,10 +2504,12 @@ tbody tr:hover {
 
     <div class="filter-panel">
 
+
         <form
             method="GET"
             class="filter-form"
         >
+
 
             <div class="form-group">
 
@@ -2308,8 +2553,7 @@ tbody tr:hover {
                             value="<?= e(
                                 $optionStatus
                             ) ?>"
-                            <?= $statusFilter ===
-                                $optionStatus
+                            <?= $statusFilter === $optionStatus
                                 ? 'selected'
                                 : ''
                             ?>
@@ -2328,6 +2572,7 @@ tbody tr:hover {
                         </option>
 
                     <?php endforeach; ?>
+
 
                 </select>
 
@@ -2349,7 +2594,9 @@ tbody tr:hover {
                 ↻ Reset
             </a>
 
+
         </form>
+
 
     </div>
 
@@ -2368,10 +2615,13 @@ tbody tr:hover {
             </h3>
 
             <span>
+
                 <?= number_format(
                     count($deliveries)
                 ) ?>
+
                 Records
+
             </span>
 
         </div>
@@ -2382,7 +2632,9 @@ tbody tr:hover {
 
             <div class="table-wrapper">
 
+
                 <table>
+
 
                     <thead>
 
@@ -2448,6 +2700,7 @@ tbody tr:hover {
                                 )
                             );
 
+
                         $statusClass =
                             in_array(
                                 $status,
@@ -2485,9 +2738,7 @@ tbody tr:hover {
 
                                 <?php if (
                                     !empty(
-                                        $delivery[
-                                            'order_number'
-                                        ]
+                                        $delivery['order_number']
                                     )
                                 ): ?>
 
@@ -2495,9 +2746,7 @@ tbody tr:hover {
 
                                         #
                                         <?= e(
-                                            $delivery[
-                                                'order_number'
-                                            ]
+                                            $delivery['order_number']
                                         ) ?>
 
                                     </span>
@@ -2505,14 +2754,9 @@ tbody tr:hover {
                                 <?php else: ?>
 
                                     <span class="not-assigned">
-
-                                        Order #
-                                        <?= e(
-                                            $delivery[
-                                                'order_id'
-                                            ]
+                                        Order #<?= e(
+                                            $delivery['order_id']
                                         ) ?>
-
                                     </span>
 
                                 <?php endif; ?>
@@ -2557,6 +2801,7 @@ tbody tr:hover {
                                     </div>
 
                                 <?php endif; ?>
+
 
                             </td>
 
@@ -2616,12 +2861,14 @@ tbody tr:hover {
 
                                 <?php endif; ?>
 
+
                             </td>
 
 
                             <!-- DELIVERY PERSON -->
 
                             <td>
+
 
                                 <?php if (
                                     !empty(
@@ -2631,12 +2878,9 @@ tbody tr:hover {
                                     )
                                 ): ?>
 
-                                    <div
-                                        class="delivery-person"
-                                    >
+                                    <div class="delivery-person">
 
-                                        Person #
-                                        <?= e(
+                                        Person #<?= e(
                                             $delivery[
                                                 'delivery_person_id'
                                             ]
@@ -2651,10 +2895,13 @@ tbody tr:hover {
                                 <?php else: ?>
 
                                     <span class="not-assigned">
+
                                         Not Assigned
+
                                     </span>
 
                                 <?php endif; ?>
+
 
                             </td>
 
@@ -2664,7 +2911,8 @@ tbody tr:hover {
                             <td>
 
                                 <span
-                                    class="badge <?= e(
+                                    class="badge
+                                    <?= e(
                                         $statusClass
                                     ) ?>"
                                 >
@@ -2726,7 +2974,7 @@ tbody tr:hover {
                                     ): ?>
 
                                         <strong>
-                                            Picked Up:
+                                            Pickup:
                                         </strong>
 
                                         <?= date(
@@ -2752,7 +3000,7 @@ tbody tr:hover {
                                     ): ?>
 
                                         <strong>
-                                            Out for Delivery:
+                                            Out:
                                         </strong>
 
                                         <?= date(
@@ -2816,7 +3064,9 @@ tbody tr:hover {
                                         )
                                     ): ?>
 
-                                        <span class="not-assigned">
+                                        <span
+                                            class="not-assigned"
+                                        >
                                             No activity
                                         </span>
 
@@ -2831,6 +3081,7 @@ tbody tr:hover {
                             <!-- CREATED -->
 
                             <td>
+
 
                                 <?php if (
                                     !empty(
@@ -2867,13 +3118,17 @@ tbody tr:hover {
 
                                     </span>
 
+
                                 <?php else: ?>
 
-                                    <span class="not-assigned">
+                                    <span
+                                        class="not-assigned"
+                                    >
                                         —
                                     </span>
 
                                 <?php endif; ?>
+
 
                             </td>
 
@@ -2882,10 +3137,12 @@ tbody tr:hover {
 
                             <td>
 
+
                                 <form
                                     method="POST"
                                     class="status-form"
                                 >
+
 
                                     <input
                                         type="hidden"
@@ -2900,10 +3157,12 @@ tbody tr:hover {
                                         class="status-select"
                                     >
 
+
                                         <?php foreach (
                                             $allowedStatuses
                                             as $optionStatus
                                         ): ?>
+
 
                                             <option
                                                 value="<?= e(
@@ -2928,7 +3187,9 @@ tbody tr:hover {
 
                                             </option>
 
+
                                         <?php endforeach; ?>
+
 
                                     </select>
 
@@ -2942,7 +3203,9 @@ tbody tr:hover {
                                         Update
                                     </button>
 
+
                                 </form>
+
 
                             </td>
 
@@ -2952,9 +3215,12 @@ tbody tr:hover {
 
                     <?php endforeach; ?>
 
+
                     </tbody>
 
+
                 </table>
+
 
             </div>
 
@@ -2964,17 +3230,21 @@ tbody tr:hover {
 
             <div class="empty-state">
 
+
                 <div class="empty-icon">
                     🚚
                 </div>
+
 
                 <strong>
                     No deliveries found
                 </strong>
 
+
                 <p>
                     No delivery records match your current search or filter.
                 </p>
+
 
             </div>
 
@@ -2993,6 +3263,7 @@ tbody tr:hover {
         class="panel"
         style="margin-top:18px;"
     >
+
 
         <div class="panel-header">
 
@@ -3054,6 +3325,21 @@ tbody tr:hover {
             <div class="summary-item">
 
                 <span>
+                    In Transit
+                </span>
+
+                <strong>
+                    <?= number_format(
+                        $inTransitDeliveries
+                    ) ?>
+                </strong>
+
+            </div>
+
+
+            <div class="summary-item">
+
+                <span>
                     Out for Delivery
                 </span>
 
@@ -3102,18 +3388,19 @@ tbody tr:hover {
                     Failed
                 </span>
 
-                <strong style="color:#d63031;">
-
+                <strong
+                    style="color:#d63031;"
+                >
                     <?= number_format(
                         $failedDeliveries
                     ) ?>
-
                 </strong>
 
             </div>
 
 
         </div>
+
 
     </div>
 
@@ -3123,10 +3410,12 @@ tbody tr:hover {
 
 </main>
 
+
 </div>
 
 
 <script>
+
 
 // =====================================================
 // SIDEBAR
@@ -3135,14 +3424,22 @@ tbody tr:hover {
 function toggleSidebar()
 {
     const sidebar =
-        document.getElementById("sidebar");
+        document.getElementById(
+            "sidebar"
+        );
 
     const overlay =
-        document.getElementById("sidebarOverlay");
+        document.getElementById(
+            "sidebarOverlay"
+        );
 
-    sidebar.classList.toggle("show");
+    sidebar.classList.toggle(
+        "show"
+    );
 
-    overlay.classList.toggle("show");
+    overlay.classList.toggle(
+        "show"
+    );
 }
 
 
@@ -3151,51 +3448,84 @@ function toggleSidebar()
 // =====================================================
 
 document
-    .querySelectorAll(".sidebar a")
-    .forEach(function(link)
-    {
-        link.addEventListener(
-            "click",
-            function()
-            {
-                if (window.innerWidth <= 900) {
+    .querySelectorAll(
+        ".sidebar a"
+    )
+    .forEach(
+        function(link)
+        {
 
-                    document
-                        .getElementById("sidebar")
-                        .classList.remove("show");
+            link.addEventListener(
+                "click",
+                function()
+                {
 
-                    document
-                        .getElementById("sidebarOverlay")
-                        .classList.remove("show");
+                    if (
+                        window.innerWidth <= 900
+                    ) {
+
+                        document
+                            .getElementById(
+                                "sidebar"
+                            )
+                            .classList.remove(
+                                "show"
+                            );
+
+                        document
+                            .getElementById(
+                                "sidebarOverlay"
+                            )
+                            .classList.remove(
+                                "show"
+                            );
+                    }
+
                 }
-            }
-        );
-    });
+            );
+
+        }
+    );
 
 
 // =====================================================
-// ESCAPE
+// ESCAPE KEY
 // =====================================================
 
 document.addEventListener(
     "keydown",
     function(event)
     {
-        if (event.key === "Escape") {
+
+        if (
+            event.key === "Escape"
+        ) {
 
             document
-                .getElementById("sidebar")
-                .classList.remove("show");
+                .getElementById(
+                    "sidebar"
+                )
+                .classList.remove(
+                    "show"
+                );
 
             document
-                .getElementById("sidebarOverlay")
-                .classList.remove("show");
+                .getElementById(
+                    "sidebarOverlay"
+                )
+                .classList.remove(
+                    "show"
+                );
         }
+
     }
 );
 
+
 </script>
 
+
 </body>
+
 </html>
 

@@ -11,7 +11,7 @@ require_once "../config/database.php";
 
 if (
     !isset($_SESSION['user_id'], $_SESSION['role']) ||
-    $_SESSION['role'] !== 'delivery'
+    strtolower((string)$_SESSION['role']) !== 'delivery'
 ) {
     header("Location: login.php");
     exit;
@@ -49,33 +49,37 @@ $deliveryBoyMobile =
 // DEFAULT COUNTS
 // =====================================================
 
-$totalOrders = 0;
-$pendingOrders = 0;
-$outForDelivery = 0;
+$totalOrders     = 0;
+$pendingOrders   = 0;
+$outForDelivery  = 0;
 $deliveredOrders = 0;
 
 $recentOrders = [];
 
 
 // =====================================================
-// ORDER COUNTS
+// DELIVERY COUNTS
 // =====================================================
 //
 // IMPORTANT:
-// Agar aapke orders table me delivery_boy_id aur status
-// columns available hain, ye queries directly kaam karengi.
+// Delivery workflow is controlled by deliveries table.
+//
+// deliveries.delivery_person_id
+// deliveries.status
+//
+// orders.delivery_boy_id is NOT used here.
 // =====================================================
 
 
 // -----------------------------------------------------
-// TOTAL ASSIGNED ORDERS
+// TOTAL ASSIGNED DELIVERIES
 // -----------------------------------------------------
 
 $stmt = mysqli_prepare(
     $conn,
     "SELECT COUNT(*) AS total
-     FROM orders
-     WHERE delivery_boy_id = ?"
+     FROM deliveries
+     WHERE delivery_person_id = ?"
 );
 
 if ($stmt) {
@@ -94,7 +98,8 @@ if ($stmt) {
 
         $row = mysqli_fetch_assoc($result);
 
-        $totalOrders = (int)($row['total'] ?? 0);
+        $totalOrders =
+            (int)($row['total'] ?? 0);
     }
 
     mysqli_stmt_close($stmt);
@@ -102,15 +107,24 @@ if ($stmt) {
 
 
 // -----------------------------------------------------
-// PENDING ORDERS
+// PENDING / ASSIGNED DELIVERIES
+// -----------------------------------------------------
+//
+// Pending means delivery is waiting for pickup.
+//
+// Normally admin assignment creates:
+// deliveries.status = assigned
+//
+// pending is also included so older/unassigned workflow
+// records don't disappear from the dashboard.
 // -----------------------------------------------------
 
 $stmt = mysqli_prepare(
     $conn,
     "SELECT COUNT(*) AS total
-     FROM orders
-     WHERE delivery_boy_id = ?
-     AND order_status IN ('pending', 'confirmed', 'processing')"
+     FROM deliveries
+     WHERE delivery_person_id = ?
+     AND status IN ('pending', 'assigned')"
 );
 
 if ($stmt) {
@@ -144,9 +158,9 @@ if ($stmt) {
 $stmt = mysqli_prepare(
     $conn,
     "SELECT COUNT(*) AS total
-     FROM orders
-     WHERE delivery_boy_id = ?
-     AND order_status = 'out_for_delivery'"
+     FROM deliveries
+     WHERE delivery_person_id = ?
+     AND status = 'out_for_delivery'"
 );
 
 if ($stmt) {
@@ -174,15 +188,15 @@ if ($stmt) {
 
 
 // -----------------------------------------------------
-// DELIVERED ORDERS
+// DELIVERED DELIVERIES
 // -----------------------------------------------------
 
 $stmt = mysqli_prepare(
     $conn,
     "SELECT COUNT(*) AS total
-     FROM orders
-     WHERE delivery_boy_id = ?
-     AND order_status = 'delivered'"
+     FROM deliveries
+     WHERE delivery_person_id = ?
+     AND status = 'delivered'"
 );
 
 if ($stmt) {
@@ -210,23 +224,38 @@ if ($stmt) {
 
 
 // =====================================================
-// RECENT ORDERS
+// RECENT DELIVERIES
+// =====================================================
+//
+// deliveries = delivery workflow
+// orders     = customer/order information
 // =====================================================
 
 $stmt = mysqli_prepare(
     $conn,
     "SELECT
-        id,
-        order_number,
-        customer_name,
-        customer_mobile,
-        delivery_address,
-        total_amount,
-        order_status,
-        created_at
-     FROM orders
-     WHERE delivery_boy_id = ?
-     ORDER BY id DESC
+
+        d.id AS delivery_id,
+        d.order_id,
+        d.status AS delivery_status,
+
+        o.id,
+        o.order_number,
+        o.customer_name,
+        o.customer_mobile,
+        o.delivery_address,
+        o.total_amount,
+        o.created_at
+
+     FROM deliveries d
+
+     INNER JOIN orders o
+        ON o.id = d.order_id
+
+     WHERE d.delivery_person_id = ?
+
+     ORDER BY d.id DESC
+
      LIMIT 8"
 );
 
@@ -1011,7 +1040,7 @@ a {
 }
 
 
-.status-confirmed {
+.status-assigned {
 
     background: #edf5ff;
 
@@ -1020,11 +1049,11 @@ a {
 }
 
 
-.status-processing {
+.status-picked_up {
 
-    background: #f0efff;
+    background: #fff4df;
 
-    color: #5a4eb0;
+    color: #a56500;
 
 }
 
@@ -1043,6 +1072,15 @@ a {
     background: #e6f7eb;
 
     color: #197333;
+
+}
+
+
+.status-failed {
+
+    background: #fff0f1;
+
+    color: #a51d2d;
 
 }
 
@@ -1793,7 +1831,7 @@ a {
                     $status =
                         strtolower(
                             trim(
-                                $order['order_status'] ?? ''
+                                $order['delivery_status'] ?? 'pending'
                             )
                         );
 
@@ -1879,7 +1917,7 @@ a {
                         <td>
 
                             <a
-                                href="order-details.php?id=<?= (int)$order['id'] ?>"
+                                href="order-details.php?delivery_id=<?= (int)$order['delivery_id'] ?>"
                                 class="details-btn"
                             >
                                 View
@@ -2117,6 +2155,9 @@ a {
 </div>
 
 
+</div>
+
+
 </main>
 
 
@@ -2126,4 +2167,3 @@ a {
 </body>
 
 </html>
-

@@ -1243,11 +1243,90 @@ if (
                 }
 
 
-                // =============================================
-                // COMMIT
-                // =============================================
+               // =============================================
+// CREATE DELIVERY RECORD
+// =============================================
+// Delivery boy yahan assign nahi hoga.
+// Admin orders.php se delivery boy assign karega.
 
-                mysqli_commit($conn);
+$delivery_sql = "
+    INSERT INTO deliveries
+    (
+        order_id,
+        status
+    )
+    VALUES
+    (
+        ?,
+        'pending'
+    )
+";
+
+
+$delivery_stmt =
+    mysqli_prepare(
+        $conn,
+        $delivery_sql
+    );
+
+
+if (!$delivery_stmt) {
+
+    throw new Exception(
+        "Delivery query prepare failed: "
+        . mysqli_error($conn)
+    );
+}
+
+
+mysqli_stmt_bind_param(
+    $delivery_stmt,
+    "i",
+    $order_id
+);
+
+
+if (
+    !mysqli_stmt_execute(
+        $delivery_stmt
+    )
+) {
+
+    throw new Exception(
+        "Delivery create failed: "
+        . mysqli_stmt_error(
+            $delivery_stmt
+        )
+    );
+}
+
+
+if (
+    mysqli_stmt_affected_rows(
+        $delivery_stmt
+    ) !== 1
+) {
+
+    mysqli_stmt_close(
+        $delivery_stmt
+    );
+
+    throw new Exception(
+        "Delivery record create nahi hua."
+    );
+}
+
+
+mysqli_stmt_close(
+    $delivery_stmt
+);
+
+
+// =============================================
+// COMMIT
+// =============================================
+
+mysqli_commit($conn);
 
 
                 // =============================================

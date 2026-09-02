@@ -11,7 +11,7 @@ require_once "../config/database.php";
 
 if (
     !isset($_SESSION['user_id'], $_SESSION['role']) ||
-    $_SESSION['role'] !== 'delivery'
+    strtolower((string)$_SESSION['role']) !== 'delivery'
 ) {
     header("Location: login.php");
     exit;
@@ -44,8 +44,13 @@ $deliveryBoyName =
 
 
 // =====================================================
-// ORDER ID
+// DELIVERY ID / ORDER ID
 // =====================================================
+
+$deliveryId =
+    isset($_GET['delivery_id'])
+        ? (int)$_GET['delivery_id']
+        : 0;
 
 $orderId =
     isset($_GET['id'])
@@ -53,282 +58,339 @@ $orderId =
         : 0;
 
 
-if ($orderId <= 0) {
+// =====================================================
+// VALID REQUEST
+// =====================================================
 
+if (
+    $deliveryId <= 0 &&
+    $orderId <= 0
+) {
     header("Location: orders.php");
     exit;
+}
+
+
+// =====================================================
+// STATUS MESSAGE
+// =====================================================
+
+$statusMessage =
+    $_SESSION['delivery_success'] ?? '';
+
+$statusError =
+    $_SESSION['delivery_error'] ?? '';
+
+unset($_SESSION['delivery_success']);
+unset($_SESSION['delivery_error']);
+
+
+// =====================================================
+// FETCH DELIVERY + ORDER
+// =====================================================
+
+$delivery = null;
+
+$deliveryStmt = null;
+
+$deliverySql = "
+    SELECT
+
+        /* DELIVERY */
+
+        d.id AS delivery_id,
+        d.order_id,
+        d.delivery_person_id,
+        d.status AS delivery_status,
+
+        d.assigned_at,
+        d.picked_up_at,
+        d.out_for_delivery_at,
+        d.delivered_at,
+
+        d.delivery_otp,
+        d.delivery_note,
+        d.failure_reason,
+
+        d.created_at AS delivery_created_at,
+        d.updated_at AS delivery_updated_at,
+
+
+        /* ORDER */
+
+        o.id AS order_id,
+        o.order_number,
+
+        o.customer_name,
+        o.customer_mobile,
+
+        o.delivery_address,
+        o.city,
+        o.state,
+        o.pincode,
+
+        o.total_amount,
+
+        o.payment_method,
+        o.payment_status,
+
+        o.order_status,
+
+        o.admin_note,
+
+        o.created_at AS order_created_at,
+        o.updated_at AS order_updated_at
+
+
+    FROM deliveries d
+
+
+    INNER JOIN orders o
+        ON o.id = d.order_id
+
+
+    WHERE d.delivery_person_id = ?
+";
+
+
+// =====================================================
+// FIND BY DELIVERY ID
+// =====================================================
+
+if ($deliveryId > 0) {
+
+    $deliverySql .= "
+        AND d.id = ?
+
+        LIMIT 1
+    ";
+
+    $deliveryStmt =
+        mysqli_prepare(
+            $conn,
+            $deliverySql
+        );
+
+
+    if ($deliveryStmt) {
+
+        mysqli_stmt_bind_param(
+            $deliveryStmt,
+            "ii",
+            $deliveryBoyId,
+            $deliveryId
+        );
+
+    }
 
 }
 
 
 // =====================================================
-// ALLOWED STATUS
+// FIND BY ORDER ID
 // =====================================================
 
-$allowedStatuses = [
-    'pending',
-    'confirmed',
-    'processing',
-    'ready',
-    'out_for_delivery',
-    'delivered',
-    'cancelled'
-];
+else {
 
+    $deliverySql .= "
+        AND d.order_id = ?
 
-// =====================================================
-// UPDATE ORDER STATUS
-// =====================================================
+        ORDER BY d.id DESC
 
-$statusMessage = '';
-$statusError = '';
+        LIMIT 1
+    ";
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    $newStatus =
-        trim(
-            $_POST['order_status'] ?? ''
+    $deliveryStmt =
+        mysqli_prepare(
+            $conn,
+            $deliverySql
         );
 
 
+    if ($deliveryStmt) {
+
+        mysqli_stmt_bind_param(
+            $deliveryStmt,
+            "ii",
+            $deliveryBoyId,
+            $orderId
+        );
+
+    }
+
+}
+
+
+// =====================================================
+// EXECUTE DELIVERY QUERY
+// =====================================================
+
+if ($deliveryStmt) {
+
     if (
-        !in_array(
-            $newStatus,
-            $allowedStatuses,
-            true
+        mysqli_stmt_execute(
+            $deliveryStmt
         )
     ) {
 
-        $statusError =
-            "Invalid order status.";
-
-    } else {
-
-        /*
-         * Important:
-         * Update only if this order belongs
-         * to the logged-in delivery boy.
-         */
-
-        $updateSql = "
-            UPDATE orders
-            SET order_status = ?
-            WHERE id = ?
-            AND delivery_boy_id = ?
-        ";
-
-
-        $updateStmt =
-            mysqli_prepare(
-                $conn,
-                $updateSql
+        $deliveryResult =
+            mysqli_stmt_get_result(
+                $deliveryStmt
             );
 
 
-        if ($updateStmt) {
+        if ($deliveryResult) {
 
-            mysqli_stmt_bind_param(
-                $updateStmt,
-                "sii",
-                $newStatus,
-                $orderId,
-                $deliveryBoyId
-            );
-
-
-            if (
-                mysqli_stmt_execute(
-                    $updateStmt
-                )
-            ) {
-
-                if (
-                    mysqli_stmt_affected_rows(
-                        $updateStmt
-                    ) >= 0
-                ) {
-
-                    $statusMessage =
-                        "Order status updated successfully.";
-
-                }
-
-            } else {
-
-                $statusError =
-                    "Unable to update order status.";
-
-            }
-
-
-            mysqli_stmt_close(
-                $updateStmt
-            );
-
-        } else {
-
-            $statusError =
-                "Database error while updating status.";
+            $delivery =
+                mysqli_fetch_assoc(
+                    $deliveryResult
+                );
 
         }
 
     }
 
-}
-
-
-// =====================================================
-// FETCH ORDER
-// =====================================================
-
-$order = null;
-
-
-$orderSql = "
-    SELECT
-        id,
-        order_number,
-        customer_name,
-        customer_mobile,
-        delivery_address,
-        city,
-        state,
-        pincode,
-        total_amount,
-        payment_method,
-        payment_status,
-        order_status,
-        created_at,
-        updated_at
-    FROM orders
-    WHERE id = ?
-    AND delivery_boy_id = ?
-    LIMIT 1
-";
-
-
-$orderStmt =
-    mysqli_prepare(
-        $conn,
-        $orderSql
-    );
-
-
-if ($orderStmt) {
-
-    mysqli_stmt_bind_param(
-        $orderStmt,
-        "ii",
-        $orderId,
-        $deliveryBoyId
-    );
-
-
-    mysqli_stmt_execute(
-        $orderStmt
-    );
-
-
-    $orderResult =
-        mysqli_stmt_get_result(
-            $orderStmt
-        );
-
-
-    if ($orderResult) {
-
-        $order =
-            mysqli_fetch_assoc(
-                $orderResult
-            );
-
-    }
-
 
     mysqli_stmt_close(
-        $orderStmt
+        $deliveryStmt
     );
 
 }
 
 
 // =====================================================
-// ORDER NOT FOUND
+// DELIVERY NOT FOUND
 // =====================================================
 
-if (!$order) {
+if (!$delivery) {
 
     http_response_code(404);
 
     ?>
+
     <!DOCTYPE html>
+
     <html lang="en">
+
     <head>
+
         <meta charset="UTF-8">
+
         <meta
             name="viewport"
             content="width=device-width, initial-scale=1.0"
         >
-        <title>Order Not Found | Medicine Aapki Gaw Mein</title>
+
+        <title>
+            Delivery Not Found | Medicine Aapki Gaw Mein
+        </title>
+
 
         <style>
 
             * {
-                box-sizing: border-box;
                 margin: 0;
                 padding: 0;
+                box-sizing: border-box;
             }
+
 
             body {
-                font-family: Arial, sans-serif;
+
+                font-family:
+                    Arial,
+                    sans-serif;
+
                 background: #f5f7fb;
+
                 min-height: 100vh;
+
                 display: flex;
+
                 align-items: center;
+
                 justify-content: center;
+
                 padding: 20px;
+
             }
+
 
             .error-card {
+
                 background: #fff;
+
                 max-width: 500px;
+
                 width: 100%;
+
                 padding: 45px 30px;
+
                 border-radius: 16px;
+
                 text-align: center;
-                border: 1px solid #edf0f4;
+
+                border:
+                    1px solid #edf0f4;
+
             }
+
 
             .error-icon {
+
                 font-size: 55px;
+
                 margin-bottom: 18px;
+
             }
+
 
             .error-card h2 {
+
                 color: #333;
+
                 margin-bottom: 10px;
+
             }
+
 
             .error-card p {
+
                 color: #888;
+
                 font-size: 14px;
+
                 line-height: 1.6;
+
                 margin-bottom: 25px;
+
             }
 
+
             .back-btn {
+
                 display: inline-block;
+
                 background: #238b39;
+
                 color: #fff;
+
                 text-decoration: none;
+
                 padding: 12px 20px;
+
                 border-radius: 8px;
+
                 font-size: 13px;
+
                 font-weight: 600;
+
             }
 
         </style>
+
     </head>
+
 
     <body>
 
@@ -338,42 +400,163 @@ if (!$order) {
                 📦
             </div>
 
+
             <h2>
-                Order Not Found
+                Delivery Not Found
             </h2>
 
+
             <p>
-                The requested order does not exist
+
+                The requested delivery does not exist
                 or it is not assigned to you.
+
             </p>
+
 
             <a
                 href="orders.php"
                 class="back-btn"
             >
+
                 ← Back to Orders
+
             </a>
 
         </div>
 
     </body>
+
     </html>
+
     <?php
 
     exit;
-
 }
 
 
 // =====================================================
-// FETCH ORDER ITEMS
+// ACTUAL IDS
+// =====================================================
+
+$deliveryId =
+    (int)$delivery['delivery_id'];
+
+$orderId =
+    (int)$delivery['order_id'];
+
+
+// =====================================================
+// CURRENT DELIVERY STATUS
+// =====================================================
+
+$currentDeliveryStatus =
+    strtolower(
+        trim(
+            $delivery['delivery_status']
+            ?? 'pending'
+        )
+    );
+
+
+// =====================================================
+// STATUS LABEL
+// =====================================================
+
+$statusLabel =
+    ucwords(
+        str_replace(
+            '_',
+            ' ',
+            $currentDeliveryStatus
+        )
+    );
+
+
+// =====================================================
+// STATUS CLASS
+// =====================================================
+
+$statusClass =
+    'status-' .
+    str_replace(
+        ' ',
+        '_',
+        $currentDeliveryStatus
+    );
+
+
+// =====================================================
+// ORDER STATUS
+// =====================================================
+
+$orderStatus =
+    strtolower(
+        trim(
+            $delivery['order_status']
+            ?? 'pending'
+        )
+    );
+
+
+$orderStatusClass =
+    'status-' .
+    str_replace(
+        ' ',
+        '_',
+        $orderStatus
+    );
+
+
+// =====================================================
+// PAYMENT STATUS
+// =====================================================
+
+$paymentStatus =
+    strtolower(
+        trim(
+            $delivery['payment_status']
+            ?? 'pending'
+        )
+    );
+
+
+$paymentClass =
+    'payment-' .
+    $paymentStatus;
+
+
+// =====================================================
+// PAYMENT METHOD
+// =====================================================
+
+$paymentMethod =
+    strtoupper(
+        $delivery['payment_method']
+        ?? 'COD'
+    );
+
+
+// =====================================================
+// TOTAL AMOUNT
+// =====================================================
+
+$totalAmount =
+    (float)(
+        $delivery['total_amount']
+        ?? 0
+    );
+
+
+// =====================================================
+// ORDER ITEMS
 // =====================================================
 
 $orderItems = [];
 
-
 $itemsSql = "
     SELECT
+
         id,
         order_id,
         medicine_id,
@@ -382,8 +565,11 @@ $itemsSql = "
         unit_price,
         total_price,
         created_at
+
     FROM order_items
+
     WHERE order_id = ?
+
     ORDER BY id ASC
 ";
 
@@ -440,70 +626,16 @@ if ($itemsStmt) {
 
 
 // =====================================================
-// ORDER DATA
+// TOTAL ITEMS
 // =====================================================
 
-$orderStatus =
-    strtolower(
-        trim(
-            $order['order_status']
-            ?? 'pending'
-        )
-    );
+$totalItems = 0;
 
 
-$statusClass =
-    'status-' .
-    str_replace(
-        ' ',
-        '_',
-        $orderStatus
-    );
-
-
-$statusLabel =
-    ucwords(
-        str_replace(
-            '_',
-            ' ',
-            $orderStatus
-        )
-    );
-
-
-$paymentStatus =
-    strtolower(
-        trim(
-            $order['payment_status']
-            ?? 'pending'
-        )
-    );
-
-
-$paymentClass =
-    'payment-' .
-    $paymentStatus;
-
-
-$paymentMethod =
-    strtoupper(
-        $order['payment_method']
-        ?? 'COD'
-    );
-
-
-$totalAmount =
-    (float)(
-        $order['total_amount']
-        ?? 0
-    );
-
-
-$totalItems =
-    0;
-
-
-foreach ($orderItems as $item) {
+foreach (
+    $orderItems
+    as $item
+) {
 
     $totalItems +=
         (int)(
@@ -521,11 +653,47 @@ foreach ($orderItems as $item) {
 $firstLetter =
     strtoupper(
         substr(
-            $deliveryBoyName,
+            trim($deliveryBoyName),
             0,
             1
         )
     );
+
+
+if ($firstLetter === '') {
+    $firstLetter = 'D';
+}
+
+
+// =====================================================
+// DATE HELPER
+// =====================================================
+
+function formatDateTime($value)
+{
+    if (
+        empty($value)
+    ) {
+        return '';
+    }
+
+
+    $timestamp =
+        strtotime(
+            $value
+        );
+
+
+    if (!$timestamp) {
+        return '';
+    }
+
+
+    return date(
+        'd M Y, h:i A',
+        $timestamp
+    );
+}
 
 
 // =====================================================
@@ -545,19 +713,28 @@ $pageTitle =
 
 <meta charset="UTF-8">
 
+
 <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
 >
 
+
 <title>
+
     <?= e($pageTitle) ?>
+
     |
+
     <?= e(
-        $order['order_number']
-        ?? $order['id']
+        $delivery['order_number']
+        ?? $orderId
     ) ?>
-    | Medicine Aapki Gaw Mein
+
+    |
+
+    Medicine Aapki Gaw Mein
+
 </title>
 
 
@@ -948,6 +1125,49 @@ a {
 
 
 /* =====================================================
+   ALERT
+===================================================== */
+
+.alert {
+
+    padding: 13px 16px;
+
+    border-radius: 9px;
+
+    margin-bottom: 20px;
+
+    font-size: 12px;
+
+    font-weight: 500;
+
+}
+
+
+.alert-success {
+
+    background: #eaf8ed;
+
+    color: #197333;
+
+    border:
+        1px solid #cdebd3;
+
+}
+
+
+.alert-error {
+
+    background: #fff0f1;
+
+    color: #a51d2d;
+
+    border:
+        1px solid #f2ced2;
+
+}
+
+
+/* =====================================================
    ORDER HEADER
 ===================================================== */
 
@@ -1021,6 +1241,10 @@ a {
 }
 
 
+/* =====================================================
+   STATUS COLORS
+===================================================== */
+
 .status-pending {
 
     background: #fff7df;
@@ -1029,6 +1253,62 @@ a {
 
 }
 
+
+.status-assigned {
+
+    background: #fff7df;
+
+    color: #a87900;
+
+}
+
+
+.status-picked_up {
+
+    background: #eef4ff;
+
+    color: #315ea8;
+
+}
+
+
+.status-out_for_delivery {
+
+    background: #eaf8ed;
+
+    color: #238b39;
+
+}
+
+
+.status-delivered {
+
+    background: #e6f7eb;
+
+    color: #197333;
+
+}
+
+
+.status-failed {
+
+    background: #fff0f1;
+
+    color: #b42318;
+
+}
+
+
+.status-cancelled {
+
+    background: #fff0f1;
+
+    color: #a51d2d;
+
+}
+
+
+/* Order status */
 
 .status-confirmed {
 
@@ -1057,33 +1337,6 @@ a {
 }
 
 
-.status-out_for_delivery {
-
-    background: #eaf8ed;
-
-    color: #238b39;
-
-}
-
-
-.status-delivered {
-
-    background: #e6f7eb;
-
-    color: #197333;
-
-}
-
-
-.status-cancelled {
-
-    background: #fff0f1;
-
-    color: #a51d2d;
-
-}
-
-
 .order-date {
 
     color: #999;
@@ -1091,49 +1344,6 @@ a {
     font-size: 10px;
 
     margin-top: 7px;
-
-}
-
-
-/* =====================================================
-   ALERT
-===================================================== */
-
-.alert {
-
-    padding: 13px 16px;
-
-    border-radius: 9px;
-
-    margin-bottom: 20px;
-
-    font-size: 12px;
-
-    font-weight: 500;
-
-}
-
-
-.alert-success {
-
-    background: #eaf8ed;
-
-    color: #197333;
-
-    border:
-        1px solid #cdebd3;
-
-}
-
-
-.alert-error {
-
-    background: #fff0f1;
-
-    color: #a51d2d;
-
-    border:
-        1px solid #f2ced2;
 
 }
 
@@ -1321,7 +1531,7 @@ a {
 
 
 /* =====================================================
-   TOTAL
+   SUMMARY
 ===================================================== */
 
 .summary {
@@ -1424,7 +1634,7 @@ a {
 
     font-size: 12px;
 
-    line-height: 1.5;
+    line-height: 1.6;
 
 }
 
@@ -1487,79 +1697,48 @@ a {
 
 
 /* =====================================================
-   STATUS FORM
+   DELIVERY ACTION
 ===================================================== */
 
-.status-form {
+.action-area {
 
     padding: 20px;
 
 }
 
 
-.status-form label {
+.action-description {
 
-    display: block;
-
-    color: #555;
+    color: #777;
 
     font-size: 11px;
 
-    font-weight: 600;
+    line-height: 1.6;
 
-    margin-bottom: 7px;
+    margin-bottom: 15px;
 
 }
 
 
-.status-select {
+.action-btn {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
 
     width: 100%;
 
-    height: 43px;
-
-    border:
-        1px solid #dfe4e8;
-
-    border-radius: 8px;
-
-    padding: 0 12px;
-
-    font-family: inherit;
-
-    font-size: 12px;
-
-    outline: none;
-
-    background: #fff;
-
-}
-
-
-.status-select:focus {
-
-    border-color: #51b848;
-
-    box-shadow:
-        0 0 0 3px
-        rgba(81,184,72,.10);
-
-}
-
-
-.update-btn {
-
-    width: 100%;
-
-    height: 43px;
+    min-height: 43px;
 
     border: none;
 
     border-radius: 8px;
 
-    background: #238b39;
-
     color: #fff;
+
+    background: #238b39;
 
     font-family: inherit;
 
@@ -1569,14 +1748,271 @@ a {
 
     cursor: pointer;
 
-    margin-top: 12px;
+    transition: .2s;
+
+    margin-top: 9px;
 
 }
 
 
-.update-btn:hover {
+.action-btn:hover {
 
     background: #1b7330;
+
+}
+
+
+.action-btn.blue {
+
+    background: #315ea8;
+
+}
+
+
+.action-btn.blue:hover {
+
+    background: #274b86;
+
+}
+
+
+.action-btn.red {
+
+    background: #b42318;
+
+}
+
+
+.action-btn.red:hover {
+
+    background: #941b12;
+
+}
+
+
+.action-btn.disabled {
+
+    background: #d8dde2;
+
+    color: #7f8790;
+
+    cursor: not-allowed;
+
+}
+
+
+/* =====================================================
+   ACTION NOTE
+===================================================== */
+
+.action-note {
+
+    margin-top: 15px;
+
+    padding: 12px;
+
+    background: #fafbfc;
+
+    border:
+        1px solid #edf0f4;
+
+    border-radius: 8px;
+
+    color: #777;
+
+    font-size: 10px;
+
+    line-height: 1.6;
+
+}
+
+
+/* =====================================================
+   FAILURE AREA
+===================================================== */
+
+.failure-box {
+
+    margin-top: 15px;
+
+    padding-top: 15px;
+
+    border-top:
+        1px solid #edf0f4;
+
+}
+
+
+/* =====================================================
+   TIMELINE
+===================================================== */
+
+.timeline {
+
+    padding: 18px 20px 20px;
+
+}
+
+
+.timeline-item {
+
+    position: relative;
+
+    padding-left: 30px;
+
+    padding-bottom: 22px;
+
+}
+
+
+.timeline-item:last-child {
+
+    padding-bottom: 0;
+
+}
+
+
+.timeline-item::before {
+
+    content: '';
+
+    position: absolute;
+
+    left: 7px;
+
+    top: 18px;
+
+    bottom: -2px;
+
+    width: 2px;
+
+    background: #e4e9ee;
+
+}
+
+
+.timeline-item:last-child::before {
+
+    display: none;
+
+}
+
+
+.timeline-dot {
+
+    position: absolute;
+
+    left: 0;
+
+    top: 2px;
+
+    width: 16px;
+
+    height: 16px;
+
+    border-radius: 50%;
+
+    background: #dfe4e8;
+
+    border: 3px solid #fff;
+
+    box-shadow:
+        0 0 0 1px #dfe4e8;
+
+}
+
+
+.timeline-item.completed
+.timeline-dot {
+
+    background: #238b39;
+
+    box-shadow:
+        0 0 0 1px #238b39;
+
+}
+
+
+.timeline-title {
+
+    font-size: 11px;
+
+    font-weight: 600;
+
+    color: #444;
+
+}
+
+
+.timeline-time {
+
+    font-size: 9px;
+
+    color: #999;
+
+    margin-top: 4px;
+
+}
+
+
+.timeline-item.completed
+.timeline-title {
+
+    color: #238b39;
+
+}
+
+
+/* =====================================================
+   FAILURE TIMELINE
+===================================================== */
+
+.timeline-item.failed
+.timeline-dot {
+
+    background: #b42318;
+
+    box-shadow:
+        0 0 0 1px #b42318;
+
+}
+
+
+.timeline-item.failed
+.timeline-title {
+
+    color: #b42318;
+
+}
+
+
+/* =====================================================
+   NOTE
+===================================================== */
+
+.note-box {
+
+    padding: 15px 20px 20px;
+
+}
+
+
+.note-content {
+
+    background: #fafbfc;
+
+    border:
+        1px solid #edf0f4;
+
+    border-radius: 8px;
+
+    padding: 12px;
+
+    color: #666;
+
+    font-size: 11px;
+
+    line-height: 1.6;
 
 }
 
@@ -1621,6 +2057,7 @@ a {
 
     }
 
+
     .main-content {
 
         margin-left: 0;
@@ -1629,11 +2066,13 @@ a {
 
     }
 
+
     .topbar {
 
         padding: 0 18px;
 
     }
+
 
     .content {
 
@@ -1652,11 +2091,13 @@ a {
 
     }
 
+
     .order-header {
 
         display: block;
 
     }
+
 
     .order-header-right {
 
@@ -1666,17 +2107,20 @@ a {
 
     }
 
+
     .delivery-info {
 
         display: none;
 
     }
 
+
     .topbar-title h1 {
 
         font-size: 18px;
 
     }
+
 
     .order-header-left h2 {
 
@@ -1706,18 +2150,24 @@ a {
 
     <div class="sidebar-brand">
 
+
         <div class="brand-icon">
             🚚
         </div>
 
+
         <h2>
+
             Medicine Aapki<br>
             Gaw Mein
+
         </h2>
+
 
         <p>
             Delivery Panel
         </p>
+
 
     </div>
 
@@ -1819,7 +2269,7 @@ a {
         </h1>
 
         <p>
-            View assigned order information
+            View assigned delivery information
         </p>
 
     </div>
@@ -1871,7 +2321,9 @@ a {
         href="orders.php"
         class="back-btn"
     >
+
         ← Back to My Orders
+
     </a>
 
 </div>
@@ -1886,6 +2338,7 @@ a {
     <div class="alert alert-success">
 
         ✓
+
         <?= e($statusMessage) ?>
 
     </div>
@@ -1898,6 +2351,7 @@ a {
     <div class="alert alert-error">
 
         ⚠
+
         <?= e($statusError) ?>
 
     </div>
@@ -1914,13 +2368,14 @@ a {
 
     <div class="order-header-left">
 
+
         <h2>
 
             Order #
 
             <?= e(
-                $order['order_number']
-                ?? $order['id']
+                $delivery['order_number']
+                ?? $orderId
             ) ?>
 
         </h2>
@@ -1931,15 +2386,14 @@ a {
             Placed on
 
             <?= e(
-                date(
-                    'd M Y, h:i A',
-                    strtotime(
-                        $order['created_at']
-                    )
+                formatDateTime(
+                    $delivery['order_created_at']
+                    ?? ''
                 )
             ) ?>
 
         </p>
+
 
     </div>
 
@@ -1948,8 +2402,7 @@ a {
 
 
         <span
-            class="status
-            <?= e($statusClass) ?>"
+            class="status <?= e($statusClass) ?>"
         >
 
             <?= e($statusLabel) ?>
@@ -1959,8 +2412,8 @@ a {
 
         <div class="order-date">
 
-            Order ID:
-            #<?= (int)$order['id'] ?>
+            Delivery ID:
+            #<?= (int)$deliveryId ?>
 
         </div>
 
@@ -1994,17 +2447,20 @@ a {
 
     <div class="card-header">
 
+
         <h3>
             🛒 Order Items
         </h3>
 
+
         <span>
 
-            <?= $totalItems ?>
+            <?= (int)$totalItems ?>
 
             Item<?= $totalItems !== 1 ? 's' : '' ?>
 
         </span>
+
 
     </div>
 
@@ -2070,6 +2526,7 @@ a {
                             <div class="medicine-id">
 
                                 Medicine ID:
+
                                 <?= (int)(
                                     $item['medicine_id']
                                     ?? 0
@@ -2085,6 +2542,7 @@ a {
                             <span class="quantity">
 
                                 ×
+
                                 <?= (int)(
                                     $item['quantity']
                                     ?? 1
@@ -2186,7 +2644,7 @@ a {
             </span>
 
             <strong>
-                <?= $totalItems ?>
+                <?= (int)$totalItems ?>
             </strong>
 
         </div>
@@ -2211,9 +2669,9 @@ a {
                 Payment Status
             </span>
 
+
             <span
-                class="payment
-                <?= e($paymentClass) ?>"
+                class="payment <?= e($paymentClass) ?>"
             >
 
                 <?= e(
@@ -2233,6 +2691,7 @@ a {
                 Order Total
             </span>
 
+
             <span class="total-amount">
 
                 ₹<?= number_format(
@@ -2243,6 +2702,233 @@ a {
             </span>
 
         </div>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- =====================================================
+     DELIVERY TIMELINE
+===================================================== -->
+
+<div class="card">
+
+
+    <div class="card-header">
+
+        <h3>
+            🕒 Delivery Timeline
+        </h3>
+
+    </div>
+
+
+    <div class="timeline">
+
+
+        <!-- ASSIGNED -->
+
+        <div
+            class="timeline-item
+            <?= !empty($delivery['assigned_at'])
+                ? 'completed'
+                : ''
+            ?>"
+        >
+
+            <span class="timeline-dot"></span>
+
+
+            <div class="timeline-title">
+
+                Assigned
+
+            </div>
+
+
+            <?php if (
+                !empty(
+                    $delivery['assigned_at']
+                )
+            ): ?>
+
+                <div class="timeline-time">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['assigned_at']
+                        )
+                    ) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </div>
+
+
+        <!-- PICKED UP -->
+
+        <div
+            class="timeline-item
+            <?= !empty($delivery['picked_up_at'])
+                ? 'completed'
+                : ''
+            ?>"
+        >
+
+            <span class="timeline-dot"></span>
+
+
+            <div class="timeline-title">
+
+                Picked Up
+
+            </div>
+
+
+            <?php if (
+                !empty(
+                    $delivery['picked_up_at']
+                )
+            ): ?>
+
+                <div class="timeline-time">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['picked_up_at']
+                        )
+                    ) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </div>
+
+
+        <!-- OUT FOR DELIVERY -->
+
+        <div
+            class="timeline-item
+            <?= !empty(
+                $delivery['out_for_delivery_at']
+            )
+                ? 'completed'
+                : ''
+            ?>"
+        >
+
+            <span class="timeline-dot"></span>
+
+
+            <div class="timeline-title">
+
+                Out for Delivery
+
+            </div>
+
+
+            <?php if (
+                !empty(
+                    $delivery['out_for_delivery_at']
+                )
+            ): ?>
+
+                <div class="timeline-time">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['out_for_delivery_at']
+                        )
+                    ) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </div>
+
+
+        <!-- DELIVERED -->
+
+        <div
+            class="timeline-item
+            <?= !empty(
+                $delivery['delivered_at']
+            )
+                ? 'completed'
+                : ''
+            ?>"
+        >
+
+            <span class="timeline-dot"></span>
+
+
+            <div class="timeline-title">
+
+                Delivered
+
+            </div>
+
+
+            <?php if (
+                !empty(
+                    $delivery['delivered_at']
+                )
+            ): ?>
+
+                <div class="timeline-time">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['delivered_at']
+                        )
+                    ) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </div>
+
+
+        <!-- FAILED -->
+
+        <?php if (
+            $currentDeliveryStatus === 'failed'
+        ): ?>
+
+            <div class="timeline-item failed">
+
+                <span class="timeline-dot"></span>
+
+
+                <div class="timeline-title">
+
+                    Delivery Failed
+
+                </div>
+
+
+                <div class="timeline-time">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['delivery_updated_at']
+                            ?? ''
+                        )
+                    ) ?>
+
+                </div>
+
+            </div>
+
+        <?php endif; ?>
 
 
     </div>
@@ -2286,10 +2972,11 @@ a {
                 Customer Name
             </div>
 
+
             <div class="info-value customer-name">
 
                 <?= e(
-                    $order['customer_name']
+                    $delivery['customer_name']
                     ?? 'Customer'
                 ) ?>
 
@@ -2304,33 +2991,41 @@ a {
                 Mobile Number
             </div>
 
+
             <div class="info-value">
+
 
                 <?php if (
                     !empty(
-                        $order['customer_mobile']
+                        $delivery['customer_mobile']
                     )
                 ): ?>
 
+
                     <a
                         href="tel:<?= e(
-                            $order['customer_mobile']
+                            $delivery['customer_mobile']
                         ) ?>"
                         class="phone-link"
                     >
 
                         📱
+
                         <?= e(
-                            $order['customer_mobile']
+                            $delivery['customer_mobile']
                         ) ?>
 
                     </a>
 
+
                 <?php else: ?>
+
 
                     N/A
 
+
                 <?php endif; ?>
+
 
             </div>
 
@@ -2343,36 +3038,38 @@ a {
                 Delivery Address
             </div>
 
+
             <div class="info-value">
 
+
                 <?= e(
-                    $order['delivery_address']
+                    $delivery['delivery_address']
                     ?? 'N/A'
                 ) ?>
 
 
                 <?php if (
                     !empty(
-                        $order['city']
+                        $delivery['city']
                     )
                 ): ?>
 
                     <br>
 
                     <?= e(
-                        $order['city']
+                        $delivery['city']
                     ) ?>
 
 
                     <?php if (
                         !empty(
-                            $order['state']
+                            $delivery['state']
                         )
                     ): ?>
 
                         ,
                         <?= e(
-                            $order['state']
+                            $delivery['state']
                         ) ?>
 
                     <?php endif; ?>
@@ -2380,18 +3077,20 @@ a {
 
                     <?php if (
                         !empty(
-                            $order['pincode']
+                            $delivery['pincode']
                         )
                     ): ?>
 
                         -
                         <?= e(
-                            $order['pincode']
+                            $delivery['pincode']
                         ) ?>
 
                     <?php endif; ?>
 
+
                 <?php endif; ?>
+
 
             </div>
 
@@ -2404,6 +3103,7 @@ a {
                 Payment
             </div>
 
+
             <div class="info-value">
 
                 <?= e($paymentMethod) ?>
@@ -2411,8 +3111,7 @@ a {
                 -
 
                 <span
-                    class="payment
-                    <?= e($paymentClass) ?>"
+                    class="payment <?= e($paymentClass) ?>"
                 >
 
                     <?= e(
@@ -2435,7 +3134,7 @@ a {
 
 
 <!-- =====================================================
-     UPDATE STATUS
+     DELIVERY ACTIONS
 ===================================================== -->
 
 <div class="card">
@@ -2443,87 +3142,283 @@ a {
 
     <div class="card-header">
 
+
         <h3>
-            🔄 Update Order Status
+            🚚 Delivery Action
         </h3>
+
+
+        <span>
+            <?= e($statusLabel) ?>
+        </span>
+
 
     </div>
 
 
-    <form
-        method="POST"
-        class="status-form"
-    >
+    <div class="action-area">
 
 
-        <label for="order_status">
+        <!-- =============================================
+             PENDING
+        ============================================== -->
 
-            Order Status
-
-        </label>
-
-
-        <select
-            name="order_status"
-            id="order_status"
-            class="status-select"
-        >
+        <?php if (
+            $currentDeliveryStatus === 'pending'
+        ): ?>
 
 
-            <?php foreach (
-                $allowedStatuses
-                as $allowedStatus
-            ): ?>
+            <p class="action-description">
+
+                This delivery is waiting for admin
+                assignment. You cannot start delivery
+                until the order is assigned to you.
+
+            </p>
 
 
-                <option
-                    value="<?= e(
-                        $allowedStatus
-                    ) ?>"
-                    <?= $orderStatus ===
-                        $allowedStatus
-                            ? 'selected'
-                            : ''
-                    ?>
+            <button
+                type="button"
+                class="action-btn disabled"
+                disabled
+            >
+
+                ⏳ Waiting for Assignment
+
+            </button>
+
+
+        <!-- =============================================
+             ASSIGNED
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'assigned'
+        ): ?>
+
+
+            <p class="action-description">
+
+                This order is assigned to you.
+                Pick up the order from the store
+                before starting the delivery.
+
+            </p>
+
+
+            <a
+                href="pickup.php?delivery_id=<?= (int)$deliveryId ?>"
+                class="action-btn"
+            >
+
+                📦 Mark as Picked Up
+
+            </a>
+
+
+            <div class="action-note">
+
+                After picking up the medicine,
+                the next step will be to mark the
+                order as <strong>Out for Delivery</strong>.
+
+            </div>
+
+
+        <!-- =============================================
+             PICKED UP
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'picked_up'
+        ): ?>
+
+
+            <p class="action-description">
+
+                You have picked up this order.
+                Start the delivery when you leave
+                for the customer's address.
+
+            </p>
+
+
+            <a
+                href="out-for-delivery.php?delivery_id=<?= (int)$deliveryId ?>"
+                class="action-btn blue"
+            >
+
+                🛵 Mark as Out for Delivery
+
+            </a>
+
+
+            <div class="action-note">
+
+                A secure 6-digit delivery OTP will be
+                generated when the order is moved to
+                <strong>Out for Delivery</strong>.
+
+            </div>
+
+
+        <!-- =============================================
+             OUT FOR DELIVERY
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'out_for_delivery'
+        ): ?>
+
+
+            <p class="action-description">
+
+                This order is currently out for delivery.
+                After reaching the customer, ask the
+                customer for the 6-digit OTP and verify
+                it before completing the delivery.
+
+            </p>
+
+
+            <a
+                href="deliver.php?delivery_id=<?= (int)$deliveryId ?>"
+                class="action-btn"
+            >
+
+                ✓ Verify OTP & Complete Delivery
+
+            </a>
+
+
+            <div class="action-note">
+
+                🔐 The delivery OTP is confidential.
+                Never mark the order as delivered without
+                verifying the OTP provided by the customer.
+
+            </div>
+
+
+            <div class="failure-box">
+
+
+                <p class="action-description">
+
+                    If you cannot complete this delivery,
+                    you can mark it as failed with a
+                    valid failure reason.
+
+                </p>
+
+
+                <a
+                    href="failed.php?delivery_id=<?= (int)$deliveryId ?>"
+                    class="action-btn red"
                 >
 
-                    <?= e(
-                        ucwords(
-                            str_replace(
-                                '_',
-                                ' ',
-                                $allowedStatus
-                            )
-                        )
-                    ) ?>
+                    ⚠ Mark Delivery Failed
 
-                </option>
+                </a>
 
 
-            <?php endforeach; ?>
+            </div>
 
 
-        </select>
+        <!-- =============================================
+             DELIVERED
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'delivered'
+        ): ?>
 
 
-        <button
-            type="submit"
-            class="update-btn"
-        >
+            <p class="action-description">
 
-            ✓ Update Status
+                This order has been successfully
+                delivered to the customer.
 
-        </button>
+            </p>
 
 
-    </form>
+            <button
+                type="button"
+                class="action-btn disabled"
+                disabled
+            >
+
+                ✓ Delivery Completed
+
+            </button>
+
+
+        <!-- =============================================
+             FAILED
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'failed'
+        ): ?>
+
+
+            <p class="action-description">
+
+                This delivery has been marked as failed.
+
+            </p>
+
+
+            <button
+                type="button"
+                class="action-btn disabled"
+                disabled
+            >
+
+                ⚠ Delivery Failed
+
+            </button>
+
+
+        <!-- =============================================
+             CANCELLED
+        ============================================== -->
+
+        <?php elseif (
+            $currentDeliveryStatus === 'cancelled'
+        ): ?>
+
+
+            <p class="action-description">
+
+                This delivery has been cancelled.
+                No further action is available.
+
+            </p>
+
+
+            <button
+                type="button"
+                class="action-btn disabled"
+                disabled
+            >
+
+                ✕ Delivery Cancelled
+
+            </button>
+
+
+        <?php endif; ?>
+
+
+    </div>
 
 
 </div>
 
 
 <!-- =====================================================
-     DELIVERY NOTE
+     DELIVERY INFORMATION
 ===================================================== -->
 
 <div class="card">
@@ -2532,7 +3427,7 @@ a {
     <div class="card-header">
 
         <h3>
-            🚚 Delivery Information
+            📋 Delivery Information
         </h3>
 
     </div>
@@ -2544,8 +3439,44 @@ a {
         <div class="info-item">
 
             <div class="info-label">
+                Delivery ID
+            </div>
+
+
+            <div class="info-value">
+
+                #<?= (int)$deliveryId ?>
+
+            </div>
+
+        </div>
+
+
+        <div class="info-item">
+
+            <div class="info-label">
+                Order Number
+            </div>
+
+
+            <div class="info-value">
+
+                <?= e(
+                    $delivery['order_number']
+                    ?? $orderId
+                ) ?>
+
+            </div>
+
+        </div>
+
+
+        <div class="info-item">
+
+            <div class="info-label">
                 Assigned To
             </div>
+
 
             <div class="info-value">
 
@@ -2561,14 +3492,14 @@ a {
         <div class="info-item">
 
             <div class="info-label">
-                Current Status
+                Delivery Status
             </div>
+
 
             <div class="info-value">
 
                 <span
-                    class="status
-                    <?= e($statusClass) ?>"
+                    class="status <?= e($statusClass) ?>"
                 >
 
                     <?= e($statusLabel) ?>
@@ -2580,32 +3511,128 @@ a {
         </div>
 
 
+        <div class="info-item">
+
+            <div class="info-label">
+                Order Status
+            </div>
+
+
+            <div class="info-value">
+
+                <span
+                    class="status <?= e($orderStatusClass) ?>"
+                >
+
+                    <?= e(
+                        ucwords(
+                            str_replace(
+                                '_',
+                                ' ',
+                                $orderStatus
+                            )
+                        )
+                    ) ?>
+
+                </span>
+
+            </div>
+
+        </div>
+
+
         <?php if (
             !empty(
-                $order['updated_at']
+                $delivery['failure_reason']
             )
         ): ?>
 
+
             <div class="info-item">
 
+
                 <div class="info-label">
-                    Last Updated
+                    Failure Reason
                 </div>
+
 
                 <div class="info-value">
 
-                    <?= e(
-                        date(
-                            'd M Y, h:i A',
-                            strtotime(
-                                $order['updated_at']
-                            )
+                    <?= nl2br(
+                        e(
+                            $delivery['failure_reason']
                         )
                     ) ?>
 
                 </div>
 
+
             </div>
+
+
+        <?php endif; ?>
+
+
+        <?php if (
+            !empty(
+                $delivery['delivery_note']
+            )
+        ): ?>
+
+
+            <div class="info-item">
+
+
+                <div class="info-label">
+                    Delivery Note
+                </div>
+
+
+                <div class="info-value">
+
+                    <?= nl2br(
+                        e(
+                            $delivery['delivery_note']
+                        )
+                    ) ?>
+
+                </div>
+
+
+            </div>
+
+
+        <?php endif; ?>
+
+
+        <?php if (
+            !empty(
+                $delivery['delivery_updated_at']
+            )
+        ): ?>
+
+
+            <div class="info-item">
+
+
+                <div class="info-label">
+                    Last Updated
+                </div>
+
+
+                <div class="info-value">
+
+                    <?= e(
+                        formatDateTime(
+                            $delivery['delivery_updated_at']
+                        )
+                    ) ?>
+
+                </div>
+
+
+            </div>
+
 
         <?php endif; ?>
 
@@ -2614,6 +3641,52 @@ a {
 
 
 </div>
+
+
+<!-- =====================================================
+     ADMIN NOTE
+===================================================== -->
+
+<?php if (
+    !empty(
+        $delivery['admin_note']
+    )
+): ?>
+
+
+<div class="card">
+
+
+    <div class="card-header">
+
+        <h3>
+            📝 Admin Note
+        </h3>
+
+    </div>
+
+
+    <div class="note-box">
+
+
+        <div class="note-content">
+
+            <?= nl2br(
+                e(
+                    $delivery['admin_note']
+                )
+            ) ?>
+
+        </div>
+
+
+    </div>
+
+
+</div>
+
+
+<?php endif; ?>
 
 
 </div>

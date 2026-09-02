@@ -5,22 +5,22 @@ session_start();
 require_once "../config/database.php";
 
 
-/* =====================================================
+/* =========================================================
    ADMIN AUTHENTICATION
-===================================================== */
+========================================================= */
 
 if (
     !isset($_SESSION['user_id'], $_SESSION['role']) ||
-    $_SESSION['role'] !== 'admin'
+    strtolower((string)$_SESSION['role']) !== 'admin'
 ) {
     header("Location: login.php");
     exit;
 }
 
 
-/* =====================================================
+/* =========================================================
    CSRF TOKEN
-===================================================== */
+========================================================= */
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -29,33 +29,28 @@ if (empty($_SESSION['csrf_token'])) {
 $csrfToken = $_SESSION['csrf_token'];
 
 
-/* =====================================================
+/* =========================================================
    VARIABLES
-===================================================== */
-
-$message = "";
-$error = "";
+========================================================= */
 
 $action = $_GET['action'] ?? 'list';
 
-$edit_id = isset($_GET['id'])
-    ? (int)$_GET['id']
-    : 0;
+$edit_id = (int)($_GET['id'] ?? 0);
 
-$search = trim($_GET['search'] ?? '');
+$message = '';
 
-$orderStatus = trim($_GET['order_status'] ?? '');
-
-$paymentStatus = trim($_GET['payment_status'] ?? '');
+$error = '';
 
 $order = null;
-$orders = null;
+
 $orderItems = null;
 
+$orders = null;
 
-/* =====================================================
-   ALLOWED ORDER STATUS
-===================================================== */
+
+/* =========================================================
+   ALLOWED STATUSES
+========================================================= */
 
 $allowedOrderStatuses = [
     'pending',
@@ -68,10 +63,6 @@ $allowedOrderStatuses = [
 ];
 
 
-/* =====================================================
-   ALLOWED PAYMENT STATUS
-===================================================== */
-
 $allowedPaymentStatuses = [
     'pending',
     'paid',
@@ -79,10 +70,6 @@ $allowedPaymentStatuses = [
     'refunded'
 ];
 
-
-/* =====================================================
-   DELIVERY STATUS
-===================================================== */
 
 $allowedDeliveryStatuses = [
     'pending',
@@ -95,12 +82,44 @@ $allowedDeliveryStatuses = [
 ];
 
 
-/* =====================================================
+/* =========================================================
    ORDER → DELIVERY STATUS MAPPING
-===================================================== */
+========================================================= */
 
-function getDeliveryStatusFromOrderStatus($orderStatus)
-{
+// function getDeliveryStatusFromOrderStatus($orderStatus)
+// {
+//     switch ($orderStatus) {
+
+//         case 'confirmed':
+//         case 'processing':
+//         case 'ready':
+//             return 'assigned';
+
+//         case 'out_for_delivery':
+//             return 'out_for_delivery';
+
+//         case 'delivered':
+//             return 'delivered';
+
+//         case 'cancelled':
+//             return 'cancelled';
+
+//         case 'pending':
+//         default:
+//             return 'pending';
+//     }
+// }
+function getDeliveryStatusFromOrderStatus(
+    $orderStatus,
+    $deliveryBoyId = null
+) {
+    /*
+     * No delivery boy = delivery remains pending
+     */
+    if ($deliveryBoyId === null) {
+        return 'pending';
+    }
+
     switch ($orderStatus) {
 
         case 'confirmed':
@@ -123,10 +142,9 @@ function getDeliveryStatusFromOrderStatus($orderStatus)
     }
 }
 
-
-/* =====================================================
+/* =========================================================
    MONEY FORMAT
-===================================================== */
+========================================================= */
 
 function formatMoney($amount)
 {
@@ -137,9 +155,9 @@ function formatMoney($amount)
 }
 
 
-/* =====================================================
+/* =========================================================
    ORDER STATUS BADGE
-===================================================== */
+========================================================= */
 
 function getOrderStatusBadge($status)
 {
@@ -196,9 +214,9 @@ function getOrderStatusBadge($status)
 }
 
 
-/* =====================================================
+/* =========================================================
    PAYMENT STATUS BADGE
-===================================================== */
+========================================================= */
 
 function getPaymentStatusBadge($status)
 {
@@ -234,17 +252,119 @@ function getPaymentStatusBadge($status)
 }
 
 
-/* =====================================================
+/* =========================================================
+   DELIVERY STATUS BADGE
+========================================================= */
+
+function getDeliveryStatusBadge($status)
+{
+    $status = strtolower(trim((string)$status));
+
+    $labels = [
+
+        'pending' => [
+            'Pending',
+            'warning'
+        ],
+
+        'assigned' => [
+            'Assigned',
+            'info'
+        ],
+
+        'picked_up' => [
+            'Picked Up',
+            'info'
+        ],
+
+        'out_for_delivery' => [
+            'Out for Delivery',
+            'warning'
+        ],
+
+        'delivered' => [
+            'Delivered',
+            'success'
+        ],
+
+        'failed' => [
+            'Failed',
+            'danger'
+        ],
+
+        'cancelled' => [
+            'Cancelled',
+            'danger'
+        ]
+    ];
+
+    return $labels[$status] ?? [
+        ucfirst(
+            str_replace(
+                '_',
+                ' ',
+                $status
+            )
+        ),
+        'secondary'
+    ];
+}
+
+
+/* =========================================================
+   GET ACTIVE DELIVERY BOYS
+========================================================= */
+
+$deliveryBoys = [];
+
+
+$deliveryBoyQuery = $conn->prepare(
+    "SELECT
+        id,
+        name,
+        mobile
+     FROM users
+     WHERE role = 'delivery'
+       AND status = 1
+     ORDER BY name ASC"
+);
+
+
+if ($deliveryBoyQuery) {
+
+    $deliveryBoyQuery->execute();
+
+    $deliveryBoyResult =
+        $deliveryBoyQuery->get_result();
+
+    if ($deliveryBoyResult) {
+
+        while (
+            $deliveryBoy =
+            $deliveryBoyResult->fetch_assoc()
+        ) {
+
+            $deliveryBoys[] =
+                $deliveryBoy;
+        }
+    }
+
+    $deliveryBoyQuery->close();
+}
+
+
+/* =========================================================
    POST REQUEST
-===================================================== */
+========================================================= */
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    /* =================================================
+    /* =====================================================
        CSRF CHECK
-    ================================================= */
+    ===================================================== */
 
-    $postedToken = $_POST['csrf_token'] ?? '';
+    $postedToken =
+        $_POST['csrf_token'] ?? '';
 
     if (
         empty($postedToken) ||
@@ -255,7 +375,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         )
     ) {
 
-        $error = "Invalid request. Please refresh the page and try again.";
+        $error =
+            "Invalid request. Please refresh the page and try again.";
 
     } else {
 
@@ -263,21 +384,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
            UPDATE ORDER
         ================================================= */
 
-        if (($_POST['action'] ?? '') === 'update_order') {
+        if (
+            ($_POST['action'] ?? '') ===
+            'update_order'
+        ) {
 
-            $id = (int)($_POST['id'] ?? 0);
+            $id =
+                (int)($_POST['id'] ?? 0);
 
-            $newOrderStatus = trim(
-                $_POST['order_status'] ?? ''
-            );
+            $newOrderStatus =
+                trim(
+                    $_POST['order_status'] ?? ''
+                );
 
-            $newPaymentStatus = trim(
-                $_POST['payment_status'] ?? ''
-            );
+            $newPaymentStatus =
+                trim(
+                    $_POST['payment_status'] ?? ''
+                );
 
-            $adminNote = trim(
-                $_POST['admin_note'] ?? ''
-            );
+            $adminNote =
+                trim(
+                    $_POST['admin_note'] ?? ''
+                );
+
+
+            /*
+             * Empty = Unassigned
+             */
+            $deliveryBoyId =
+                isset($_POST['delivery_boy_id']) &&
+                $_POST['delivery_boy_id'] !== ''
+                    ? (int)$_POST['delivery_boy_id']
+                    : null;
 
 
             /* =============================================
@@ -286,7 +424,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($id <= 0) {
 
-                $error = "Invalid order ID.";
+                $error =
+                    "Invalid order ID.";
 
             } elseif (
                 !in_array(
@@ -296,7 +435,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ) {
 
-                $error = "Invalid order status.";
+                $error =
+                    "Invalid order status.";
 
             } elseif (
                 !in_array(
@@ -306,439 +446,521 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ) {
 
-                $error = "Invalid payment status.";
+                $error =
+                    "Invalid payment status.";
 
             } else {
 
                 /* =========================================
-                   GET EXISTING ORDER
+                   VALIDATE DELIVERY BOY
                 ========================================= */
 
-                $checkOrder = $conn->prepare(
-                    "SELECT
-                        id,
-                        order_number,
-                        order_status,
-                        payment_status
-                     FROM orders
-                     WHERE id = ?
-                     LIMIT 1"
-                );
+                if ($deliveryBoyId !== null) {
 
-                if (!$checkOrder) {
+                    $validateDeliveryBoy =
+                        $conn->prepare(
+                            "SELECT
+                                id,
+                                name
+                             FROM users
+                             WHERE id = ?
+                               AND role = 'delivery'
+                               AND status = 1
+                             LIMIT 1"
+                        );
 
-                    $error =
-                        "Database error while checking order.";
 
-                } else {
-
-                    $checkOrder->bind_param(
-                        "i",
-                        $id
-                    );
-
-                    if (!$checkOrder->execute()) {
+                    if (!$validateDeliveryBoy) {
 
                         $error =
-                            "Unable to check order.";
-
-                        $checkOrder->close();
+                            "Unable to validate delivery boy.";
 
                     } else {
 
-                        $orderResult =
-                            $checkOrder->get_result();
+                        $validateDeliveryBoy->bind_param(
+                            "i",
+                            $deliveryBoyId
+                        );
+
+
+                        $validateDeliveryBoy->execute();
+
+
+                        $deliveryBoyResult =
+                            $validateDeliveryBoy->get_result();
+
 
                         if (
-                            !$orderResult ||
-                            $orderResult->num_rows !== 1
+                            !$deliveryBoyResult ||
+                            $deliveryBoyResult->num_rows !== 1
                         ) {
 
                             $error =
-                                "Order not found.";
+                                "Selected delivery boy is invalid or inactive.";
+
+                            $deliveryBoyId =
+                                null;
+                        }
+
+
+                        $validateDeliveryBoy->close();
+                    }
+                }
+
+
+                if ($error === '') {
+
+                    /* =====================================
+                       GET EXISTING ORDER
+                    ===================================== */
+
+                    $checkOrder =
+                        $conn->prepare(
+                            "SELECT
+                                id,
+                                order_number,
+                                order_status,
+                                payment_status,
+                                delivery_boy_id
+                             FROM orders
+                             WHERE id = ?
+                             LIMIT 1"
+                        );
+
+
+                    if (!$checkOrder) {
+
+                        $error =
+                            "Database error while checking order.";
+
+                    } else {
+
+                        $checkOrder->bind_param(
+                            "i",
+                            $id
+                        );
+
+
+                        if (
+                            !$checkOrder->execute()
+                        ) {
+
+                            $error =
+                                "Unable to check order.";
 
                             $checkOrder->close();
 
                         } else {
 
-                            $existingOrder =
-                                $orderResult->fetch_assoc();
-
-                            $checkOrder->close();
+                            $orderResult =
+                                $checkOrder->get_result();
 
 
-                            /* =================================
-                               CALCULATE DELIVERY STATUS
-                            ================================= */
+                            if (
+                                !$orderResult ||
+                                $orderResult->num_rows !== 1
+                            ) {
 
-                            $newDeliveryStatus =
-                                getDeliveryStatusFromOrderStatus(
-                                    $newOrderStatus
-                                );
+                                $error =
+                                    "Order not found.";
 
+                                $checkOrder->close();
 
-                            /* =================================
-                               START TRANSACTION
-                            ================================= */
+                            } else {
 
-                            $conn->begin_transaction();
+                                $existingOrder =
+                                    $orderResult->fetch_assoc();
 
-
-                            try {
-
-                                /* =================================
-                                   1. UPDATE ORDER
-                                ================================= */
-
-                                $updateOrder = $conn->prepare(
-                                    "UPDATE orders
-                                     SET
-                                        order_status = ?,
-                                        payment_status = ?,
-                                        admin_note = ?,
-                                        updated_at = CURRENT_TIMESTAMP
-                                     WHERE id = ?"
-                                );
-
-
-                                if (!$updateOrder) {
-
-                                    throw new Exception(
-                                        "Order update prepare failed."
-                                    );
-                                }
-
-
-                                $updateOrder->bind_param(
-                                    "sssi",
-                                    $newOrderStatus,
-                                    $newPaymentStatus,
-                                    $adminNote,
-                                    $id
-                                );
-
-
-                                if (
-                                    !$updateOrder->execute()
-                                ) {
-
-                                    throw new Exception(
-                                        "Order update failed: " .
-                                        $updateOrder->error
-                                    );
-                                }
-
-
-                                $updateOrder->close();
+                                $checkOrder->close();
 
 
                                 /* =================================
-                                   2. CHECK DELIVERY
+                                   CALCULATE DELIVERY STATUS
                                 ================================= */
 
-                                $checkDelivery = $conn->prepare(
-                                    "SELECT
-                                        id,
-                                        status,
-                                        delivery_person_id
-                                     FROM deliveries
-                                     WHERE order_id = ?
-                                     LIMIT 1"
-                                );
-
-
-                                if (!$checkDelivery) {
-
-                                    throw new Exception(
-                                        "Delivery check prepare failed."
-                                    );
-                                }
-
-
-                                $checkDelivery->bind_param(
-                                    "i",
-                                    $id
-                                );
-
-
-                                if (
-                                    !$checkDelivery->execute()
-                                ) {
-
-                                    throw new Exception(
-                                        "Unable to check delivery."
-                                    );
-                                }
-
-
-                                $deliveryResult =
-                                    $checkDelivery->get_result();
-
-
-                                $existingDelivery = null;
-
-
-                                if (
-                                    $deliveryResult &&
-                                    $deliveryResult->num_rows > 0
-                                ) {
-
-                                    $existingDelivery =
-                                        $deliveryResult->fetch_assoc();
-                                }
-
-
-                                $checkDelivery->close();
+                                // $newDeliveryStatus =
+                                //     getDeliveryStatusFromOrderStatus(
+                                //         $newOrderStatus
+                                //     );
+                                    $newDeliveryStatus =
+                                        getDeliveryStatusFromOrderStatus(
+                                            $newOrderStatus,
+                                            $deliveryBoyId
+                                        );
 
 
                                 /* =================================
-                                   3. UPDATE EXISTING DELIVERY
+                                   START TRANSACTION
                                 ================================= */
 
-                                if ($existingDelivery) {
-
-                                    $deliveryId =
-                                        (int)$existingDelivery['id'];
+                                $conn->begin_transaction();
 
 
-                                    /* =================================
-                                       PENDING
-                                    ================================= */
+                                try {
 
-                                    if (
-                                        $newDeliveryStatus ===
-                                        'pending'
-                                    ) {
+                                    /* =============================
+                                       1. UPDATE ORDERS TABLE
+                                    ============================= */
 
-                                        $updateDelivery =
+                                    if ($deliveryBoyId === null) {
+
+                                        $updateOrder =
                                             $conn->prepare(
-                                                "UPDATE deliveries
+                                                "UPDATE orders
                                                  SET
-                                                    status = 'pending',
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
+                                                    order_status = ?,
+                                                    payment_status = ?,
+                                                    delivery_boy_id = NULL,
+                                                    admin_note = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
                                                  WHERE id = ?"
                                             );
 
 
-                                        if (!$updateDelivery) {
+                                        if (!$updateOrder) {
 
                                             throw new Exception(
-                                                "Pending delivery update prepare failed."
+                                                "Order update prepare failed."
                                             );
                                         }
 
 
-                                        $updateDelivery->bind_param(
-                                            "i",
-                                            $deliveryId
+                                        $updateOrder->bind_param(
+                                            "sssi",
+                                            $newOrderStatus,
+                                            $newPaymentStatus,
+                                            $adminNote,
+                                            $id
                                         );
-
-
-                                    /* =================================
-                                       ASSIGNED
-                                    ================================= */
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'assigned'
-                                    ) {
-
-                                        $updateDelivery =
-                                            $conn->prepare(
-                                                "UPDATE deliveries
-                                                 SET
-                                                    status = 'assigned',
-                                                    assigned_at =
-                                                        COALESCE(
-                                                            assigned_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
-                                                 WHERE id = ?"
-                                            );
-
-
-                                        if (!$updateDelivery) {
-
-                                            throw new Exception(
-                                                "Assigned delivery update prepare failed."
-                                            );
-                                        }
-
-
-                                        $updateDelivery->bind_param(
-                                            "i",
-                                            $deliveryId
-                                        );
-
-
-                                    /* =================================
-                                       OUT FOR DELIVERY
-                                    ================================= */
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'out_for_delivery'
-                                    ) {
-
-                                        $updateDelivery =
-                                            $conn->prepare(
-                                                "UPDATE deliveries
-                                                 SET
-                                                    status = 'out_for_delivery',
-
-                                                    assigned_at =
-                                                        COALESCE(
-                                                            assigned_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-
-                                                    out_for_delivery_at =
-                                                        COALESCE(
-                                                            out_for_delivery_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
-
-                                                 WHERE id = ?"
-                                            );
-
-
-                                        if (!$updateDelivery) {
-
-                                            throw new Exception(
-                                                "Out for delivery update prepare failed."
-                                            );
-                                        }
-
-
-                                        $updateDelivery->bind_param(
-                                            "i",
-                                            $deliveryId
-                                        );
-
-
-                                    /* =================================
-                                       DELIVERED
-                                    ================================= */
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'delivered'
-                                    ) {
-
-                                        $updateDelivery =
-                                            $conn->prepare(
-                                                "UPDATE deliveries
-                                                 SET
-                                                    status = 'delivered',
-
-                                                    assigned_at =
-                                                        COALESCE(
-                                                            assigned_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-
-                                                    out_for_delivery_at =
-                                                        COALESCE(
-                                                            out_for_delivery_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-
-                                                    delivered_at =
-                                                        COALESCE(
-                                                            delivered_at,
-                                                            CURRENT_TIMESTAMP
-                                                        ),
-
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
-
-                                                 WHERE id = ?"
-                                            );
-
-
-                                        if (!$updateDelivery) {
-
-                                            throw new Exception(
-                                                "Delivered update prepare failed."
-                                            );
-                                        }
-
-
-                                        $updateDelivery->bind_param(
-                                            "i",
-                                            $deliveryId
-                                        );
-
-
-                                    /* =================================
-                                       CANCELLED
-                                    ================================= */
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'cancelled'
-                                    ) {
-
-                                        $updateDelivery =
-                                            $conn->prepare(
-                                                "UPDATE deliveries
-                                                 SET
-                                                    status = 'cancelled',
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
-                                                 WHERE id = ?"
-                                            );
-
-
-                                        if (!$updateDelivery) {
-
-                                            throw new Exception(
-                                                "Cancelled delivery update prepare failed."
-                                            );
-                                        }
-
-
-                                        $updateDelivery->bind_param(
-                                            "i",
-                                            $deliveryId
-                                        );
-
-
-                                    /* =================================
-                                       OTHER DELIVERY STATUS
-                                    ================================= */
 
                                     } else {
 
-                                        if (
-                                            !in_array(
-                                                $newDeliveryStatus,
-                                                $allowedDeliveryStatuses,
-                                                true
-                                            )
-                                        ) {
+                                        $updateOrder =
+                                            $conn->prepare(
+                                                "UPDATE orders
+                                                 SET
+                                                    order_status = ?,
+                                                    payment_status = ?,
+                                                    delivery_boy_id = ?,
+                                                    admin_note = ?,
+                                                    updated_at = CURRENT_TIMESTAMP
+                                                 WHERE id = ?"
+                                            );
+
+
+                                        if (!$updateOrder) {
 
                                             throw new Exception(
-                                                "Invalid delivery status."
+                                                "Order update prepare failed."
                                             );
                                         }
 
 
-                                        $updateDelivery =
-                                            $conn->prepare(
-                                                "UPDATE deliveries
-                                                 SET
-                                                    status = ?,
-                                                    updated_at =
-                                                        CURRENT_TIMESTAMP
-                                                 WHERE id = ?"
+                                        $updateOrder->bind_param(
+                                            "ssisi",
+                                            $newOrderStatus,
+                                            $newPaymentStatus,
+                                            $deliveryBoyId,
+                                            $adminNote,
+                                            $id
+                                        );
+                                    }
+
+
+                                    if (
+                                        !$updateOrder->execute()
+                                    ) {
+
+                                        throw new Exception(
+                                            "Order update failed: " .
+                                            $updateOrder->error
+                                        );
+                                    }
+
+
+                                    $updateOrder->close();
+
+
+                                    /* =============================
+                                       2. CHECK DELIVERY
+                                    ============================= */
+
+                                    $checkDelivery =
+                                        $conn->prepare(
+                                            "SELECT
+                                                id,
+                                                status,
+                                                delivery_person_id
+                                             FROM deliveries
+                                             WHERE order_id = ?
+                                             ORDER BY id DESC
+                                             LIMIT 1"
+                                        );
+
+
+                                    if (!$checkDelivery) {
+
+                                        throw new Exception(
+                                            "Delivery check prepare failed."
+                                        );
+                                    }
+
+
+                                    $checkDelivery->bind_param(
+                                        "i",
+                                        $id
+                                    );
+
+
+                                    if (
+                                        !$checkDelivery->execute()
+                                    ) {
+
+                                        throw new Exception(
+                                            "Unable to check delivery."
+                                        );
+                                    }
+
+
+                                    $deliveryResult =
+                                        $checkDelivery->get_result();
+
+
+                                    $existingDelivery =
+                                        null;
+
+
+                                    if (
+                                        $deliveryResult &&
+                                        $deliveryResult->num_rows > 0
+                                    ) {
+
+                                        $existingDelivery =
+                                            $deliveryResult->fetch_assoc();
+                                    }
+
+
+                                    $checkDelivery->close();
+
+
+                                    /* =============================
+                                       3. UPDATE EXISTING DELIVERY
+                                    ============================= */
+
+                                    if ($existingDelivery) {
+
+                                        $deliveryId =
+                                            (int)$existingDelivery['id'];
+
+
+                                        /*
+                                         * Delivery Boy + Status
+                                         */
+
+                                        if (
+                                            $deliveryBoyId === null
+                                        ) {
+
+                                            $updateDelivery =
+                                                $conn->prepare(
+                                                    "UPDATE deliveries
+                                                     SET
+                                                        delivery_person_id = NULL,
+                                                        status = ?,
+                                                        updated_at = CURRENT_TIMESTAMP
+                                                     WHERE id = ?"
+                                                );
+
+
+                                            if (!$updateDelivery) {
+
+                                                throw new Exception(
+                                                    "Delivery update prepare failed."
+                                                );
+                                            }
+
+
+                                            $updateDelivery->bind_param(
+                                                "si",
+                                                $newDeliveryStatus,
+                                                $deliveryId
                                             );
+
+                                        } else {
+
+                                            /*
+                                             * Timestamp handling
+                                             */
+
+                                            if (
+                                                $newDeliveryStatus ===
+                                                'pending'
+                                            ) {
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = 'pending',
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "ii",
+                                                    $deliveryBoyId,
+                                                    $deliveryId
+                                                );
+
+                                            } elseif (
+                                                $newDeliveryStatus ===
+                                                'assigned'
+                                            ) {
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = 'assigned',
+                                                            assigned_at = COALESCE(
+                                                                assigned_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "ii",
+                                                    $deliveryBoyId,
+                                                    $deliveryId
+                                                );
+
+                                            } elseif (
+                                                $newDeliveryStatus ===
+                                                'out_for_delivery'
+                                            ) {
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = 'out_for_delivery',
+                                                            assigned_at = COALESCE(
+                                                                assigned_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            out_for_delivery_at = COALESCE(
+                                                                out_for_delivery_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "ii",
+                                                    $deliveryBoyId,
+                                                    $deliveryId
+                                                );
+
+                                            } elseif (
+                                                $newDeliveryStatus ===
+                                                'delivered'
+                                            ) {
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = 'delivered',
+                                                            assigned_at = COALESCE(
+                                                                assigned_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            out_for_delivery_at = COALESCE(
+                                                                out_for_delivery_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            delivered_at = COALESCE(
+                                                                delivered_at,
+                                                                CURRENT_TIMESTAMP
+                                                            ),
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "ii",
+                                                    $deliveryBoyId,
+                                                    $deliveryId
+                                                );
+
+                                            } elseif (
+                                                $newDeliveryStatus ===
+                                                'cancelled'
+                                            ) {
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = 'cancelled',
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "ii",
+                                                    $deliveryBoyId,
+                                                    $deliveryId
+                                                );
+
+                                            } else {
+
+                                                if (
+                                                    !in_array(
+                                                        $newDeliveryStatus,
+                                                        $allowedDeliveryStatuses,
+                                                        true
+                                                    )
+                                                ) {
+
+                                                    throw new Exception(
+                                                        "Invalid delivery status."
+                                                    );
+                                                }
+
+
+                                                $updateDelivery =
+                                                    $conn->prepare(
+                                                        "UPDATE deliveries
+                                                         SET
+                                                            delivery_person_id = ?,
+                                                            status = ?,
+                                                            updated_at = CURRENT_TIMESTAMP
+                                                         WHERE id = ?"
+                                                    );
+
+
+                                                $updateDelivery->bind_param(
+                                                    "isi",
+                                                    $deliveryBoyId,
+                                                    $newDeliveryStatus,
+                                                    $deliveryId
+                                                );
+                                            }
+                                        }
 
 
                                         if (!$updateDelivery) {
@@ -749,205 +971,185 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         }
 
 
-                                        $updateDelivery->bind_param(
-                                            "si",
+                                        if (
+                                            !$updateDelivery->execute()
+                                        ) {
+
+                                            throw new Exception(
+                                                "Delivery update failed: " .
+                                                $updateDelivery->error
+                                            );
+                                        }
+
+
+                                        $updateDelivery->close();
+
+
+                                    } else {
+
+                                        /* =============================
+                                           4. CREATE DELIVERY RECORD
+                                        ============================= */
+
+                                        $assignedAt = null;
+
+                                        $outForDeliveryAt = null;
+
+                                        $deliveredAt = null;
+
+
+                                        if (
+                                            $deliveryBoyId !== null &&
+                                            $newDeliveryStatus === 'assigned'
+                                        ) {
+
+                                            $assignedAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+
+                                        } elseif (
+                                            $deliveryBoyId !== null &&
+                                            $newDeliveryStatus ===
+                                            'out_for_delivery'
+                                        ) {
+
+                                            $assignedAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+
+                                            $outForDeliveryAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+
+                                        } elseif (
+                                            $deliveryBoyId !== null &&
+                                            $newDeliveryStatus ===
+                                            'delivered'
+                                        ) {
+
+                                            $assignedAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+
+                                            $outForDeliveryAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+
+                                            $deliveredAt =
+                                                date(
+                                                    'Y-m-d H:i:s'
+                                                );
+                                        }
+
+
+                                        $insertDelivery =
+                                            $conn->prepare(
+                                                "INSERT INTO deliveries
+                                                (
+                                                    order_id,
+                                                    delivery_person_id,
+                                                    status,
+                                                    assigned_at,
+                                                    picked_up_at,
+                                                    out_for_delivery_at,
+                                                    delivered_at,
+                                                    delivery_otp,
+                                                    delivery_note,
+                                                    failure_reason,
+                                                    created_at,
+                                                    updated_at
+                                                )
+                                                VALUES
+                                                (
+                                                    ?,
+                                                    ?,
+                                                    ?,
+                                                    ?,
+                                                    NULL,
+                                                    ?,
+                                                    ?,
+                                                    NULL,
+                                                    NULL,
+                                                    NULL,
+                                                    CURRENT_TIMESTAMP,
+                                                    CURRENT_TIMESTAMP
+                                                )"
+                                            );
+
+
+                                        if (!$insertDelivery) {
+
+                                            throw new Exception(
+                                                "Delivery creation prepare failed: " .
+                                                $conn->error
+                                            );
+                                        }
+
+
+                                        $insertDelivery->bind_param(
+                                            "iissss",
+                                            $id,
+                                            $deliveryBoyId,
                                             $newDeliveryStatus,
-                                            $deliveryId
-                                        );
-                                    }
-
-
-                                    /* =================================
-                                       EXECUTE DELIVERY UPDATE
-                                    ================================= */
-
-                                    if (
-                                        !$updateDelivery->execute()
-                                    ) {
-
-                                        throw new Exception(
-                                            "Delivery update failed: " .
-                                            $updateDelivery->error
-                                        );
-                                    }
-
-
-                                    $updateDelivery->close();
-
-
-                                } else {
-
-                                    /* =================================
-                                       4. CREATE DELIVERY RECORD
-                                    ================================= */
-
-                                    $assignedAt = null;
-
-                                    $outForDeliveryAt = null;
-
-                                    $deliveredAt = null;
-
-
-                                    /* =================================
-                                       TIMESTAMPS
-                                    ================================= */
-
-                                    if (
-                                        $newDeliveryStatus ===
-                                        'assigned'
-                                    ) {
-
-                                        $assignedAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'out_for_delivery'
-                                    ) {
-
-                                        $assignedAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-
-                                        $outForDeliveryAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-
-                                    } elseif (
-                                        $newDeliveryStatus ===
-                                        'delivered'
-                                    ) {
-
-                                        $assignedAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-
-                                        $outForDeliveryAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-
-                                        $deliveredAt =
-                                            date(
-                                                'Y-m-d H:i:s'
-                                            );
-                                    }
-
-
-                                    /* =================================
-                                       INSERT DELIVERY
-                                    ================================= */
-
-                                    $insertDelivery =
-                                        $conn->prepare(
-                                            "INSERT INTO deliveries
-                                            (
-                                                order_id,
-                                                delivery_person_id,
-                                                status,
-                                                assigned_at,
-                                                picked_up_at,
-                                                out_for_delivery_at,
-                                                delivered_at,
-                                                delivery_otp,
-                                                delivery_note,
-                                                failure_reason,
-                                                created_at,
-                                                updated_at
-                                            )
-                                            VALUES
-                                            (
-                                                ?,
-                                                NULL,
-                                                ?,
-                                                ?,
-                                                NULL,
-                                                ?,
-                                                ?,
-                                                NULL,
-                                                NULL,
-                                                NULL,
-                                                CURRENT_TIMESTAMP,
-                                                CURRENT_TIMESTAMP
-                                            )"
+                                            $assignedAt,
+                                            $outForDeliveryAt,
+                                            $deliveredAt
                                         );
 
 
-                                    if (!$insertDelivery) {
+                                        if (
+                                            !$insertDelivery->execute()
+                                        ) {
 
-                                        throw new Exception(
-                                            "Delivery creation prepare failed: " .
-                                            $conn->error
-                                        );
+                                            throw new Exception(
+                                                "Delivery record could not be created: " .
+                                                $insertDelivery->error
+                                            );
+                                        }
+
+
+                                        $insertDelivery->close();
                                     }
 
 
-                                    $insertDelivery->bind_param(
-                                        "issss",
-                                        $id,
-                                        $newDeliveryStatus,
-                                        $assignedAt,
-                                        $outForDeliveryAt,
-                                        $deliveredAt
-                                    );
+                                    /* =============================
+                                       5. COMMIT
+                                    ============================= */
+
+                                    $conn->commit();
 
 
-                                    if (
-                                        !$insertDelivery->execute()
-                                    ) {
-
-                                        throw new Exception(
-                                            "Delivery record could not be created: " .
-                                            $insertDelivery->error
-                                        );
-                                    }
+                                    $message =
+                                        "Order, delivery boy and delivery status updated successfully.";
 
 
-                                    $insertDelivery->close();
+                                    $action =
+                                        'view';
+
+                                    $edit_id =
+                                        $id;
+
+
+                                } catch (Throwable $e) {
+
+                                    $conn->rollback();
+
+
+                                    $error =
+                                        $e->getMessage();
+
+
+                                    $action =
+                                        'view';
+
+                                    $edit_id =
+                                        $id;
                                 }
-
-
-                                /* =================================
-                                   5. COMMIT
-                                ================================= */
-
-                                $conn->commit();
-
-
-                                $message =
-                                    "Order and delivery status updated successfully.";
-
-
-                                $action =
-                                    'view';
-
-                                $edit_id =
-                                    $id;
-
-
-                            } catch (Throwable $e) {
-
-                                /* =================================
-                                   ROLLBACK
-                                ================================= */
-
-                                $conn->rollback();
-
-
-                                $error =
-                                    $e->getMessage();
-
-
-                                $action =
-                                    'view';
-
-                                $edit_id =
-                                    $id;
                             }
                         }
                     }
@@ -968,15 +1170,21 @@ if (
 ) {
 
     /* =================================================
-       FETCH ORDER
+       FETCH ORDER + DELIVERY BOY
     ================================================= */
 
-    $stmt = $conn->prepare(
-        "SELECT *
-         FROM orders
-         WHERE id = ?
-         LIMIT 1"
-    );
+    $stmt =
+        $conn->prepare(
+            "SELECT
+                o.*,
+                u.name AS delivery_boy_name,
+                u.mobile AS delivery_boy_mobile
+             FROM orders o
+             LEFT JOIN users u
+                ON u.id = o.delivery_boy_id
+             WHERE o.id = ?
+             LIMIT 1"
+        );
 
 
     if ($stmt) {
@@ -986,7 +1194,9 @@ if (
             $edit_id
         );
 
+
         $stmt->execute();
+
 
         $result =
             $stmt->get_result();
@@ -1027,10 +1237,13 @@ if (
                     $edit_id
                 );
 
+
                 $stmtItems->execute();
+
 
                 $orderItems =
                     $stmtItems->get_result();
+
 
                 $stmtItems->close();
 
@@ -1038,6 +1251,58 @@ if (
 
                 $error =
                     "Order items load nahi ho paye.";
+            }
+
+
+            /* =========================================
+               FETCH DELIVERY
+            ========================================= */
+
+            $stmtDelivery =
+                $conn->prepare(
+                    "SELECT
+                        d.*,
+                        u.name AS delivery_person_name,
+                        u.mobile AS delivery_person_mobile
+                     FROM deliveries d
+                     LEFT JOIN users u
+                        ON u.id = d.delivery_person_id
+                     WHERE d.order_id = ?
+                     ORDER BY d.id DESC
+                     LIMIT 1"
+                );
+
+
+            $delivery =
+                null;
+
+
+            if ($stmtDelivery) {
+
+                $stmtDelivery->bind_param(
+                    "i",
+                    $edit_id
+                );
+
+
+                $stmtDelivery->execute();
+
+
+                $deliveryResult =
+                    $stmtDelivery->get_result();
+
+
+                if (
+                    $deliveryResult &&
+                    $deliveryResult->num_rows > 0
+                ) {
+
+                    $delivery =
+                        $deliveryResult->fetch_assoc();
+                }
+
+
+                $stmtDelivery->close();
             }
 
 
@@ -1068,7 +1333,9 @@ if (
 if ($action === 'list') {
 
     $conditions = [];
+
     $params = [];
+
     $types = "";
 
 
@@ -1076,25 +1343,46 @@ if ($action === 'list') {
        SEARCH
     ================================================= */
 
+    $search =
+        trim(
+            $_GET['search'] ?? ''
+        );
+
+
+    $orderStatus =
+        trim(
+            $_GET['order_status'] ?? ''
+        );
+
+
+    $paymentStatus =
+        trim(
+            $_GET['payment_status'] ?? ''
+        );
+
+
     if ($search !== '') {
 
         $conditions[] =
             "(
-                order_number LIKE ?
-                OR customer_name LIKE ?
-                OR customer_mobile LIKE ?
-                OR city LIKE ?
-                OR pincode LIKE ?
+                o.order_number LIKE ?
+                OR o.customer_name LIKE ?
+                OR o.customer_mobile LIKE ?
+                OR o.city LIKE ?
+                OR o.pincode LIKE ?
             )";
+
 
         $searchTerm =
             "%" . $search . "%";
 
+
         $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
+
 
         $types .= "sssss";
     }
@@ -1114,10 +1402,12 @@ if ($action === 'list') {
     ) {
 
         $conditions[] =
-            "order_status = ?";
+            "o.order_status = ?";
+
 
         $params[] =
             $orderStatus;
+
 
         $types .= "s";
     }
@@ -1137,10 +1427,12 @@ if ($action === 'list') {
     ) {
 
         $conditions[] =
-            "payment_status = ?";
+            "o.payment_status = ?";
+
 
         $params[] =
             $paymentStatus;
+
 
         $types .= "s";
     }
@@ -1151,8 +1443,13 @@ if ($action === 'list') {
     ================================================= */
 
     $sql =
-        "SELECT *
-         FROM orders";
+        "SELECT
+            o.*,
+            u.name AS delivery_boy_name,
+            u.mobile AS delivery_boy_mobile
+         FROM orders o
+         LEFT JOIN users u
+            ON u.id = o.delivery_boy_id";
 
 
     if (!empty($conditions)) {
@@ -1167,7 +1464,7 @@ if ($action === 'list') {
 
 
     $sql .=
-        " ORDER BY id DESC";
+        " ORDER BY o.id DESC";
 
 
     $stmt =
@@ -1186,6 +1483,7 @@ if ($action === 'list') {
 
 
         $stmt->execute();
+
 
         $orders =
             $stmt->get_result();
@@ -1236,10 +1534,6 @@ $pageTitle =
 
 <style>
 
-/* =====================================================
-   RESET
-===================================================== */
-
 * {
     box-sizing: border-box;
 }
@@ -1261,11 +1555,6 @@ textarea,
 select {
     font-family: inherit;
 }
-
-
-/* =====================================================
-   LAYOUT
-===================================================== */
 
 .admin-wrapper {
     min-height: 100vh;
@@ -1375,14 +1664,17 @@ select {
 .topbar {
     height: 72px;
     background: #fff;
-    border-bottom: 1px solid #e8edf2;
+    border-bottom: 1px solid #e9edf1;
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 30px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
+}
+
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
 }
 
 .topbar-title {
@@ -1393,11 +1685,23 @@ select {
 
 .admin-user {
     font-size: 12px;
-    color: #888;
+    color: #777;
 }
 
 .admin-user strong {
-    color: #333;
+    color: #278c3c;
+}
+
+.mobile-menu-btn {
+    display: none;
+    border: 0;
+    background: #eaf7ec;
+    color: #278c3c;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
 }
 
 
@@ -1411,16 +1715,39 @@ select {
 
 .page-heading {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    gap: 15px;
-    margin-bottom: 22px;
+    align-items: center;
+    margin-bottom: 20px;
 }
 
 .page-heading h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: 22px;
     color: #222;
+}
+
+
+/* =====================================================
+   ALERTS
+===================================================== */
+
+.alert {
+    padding: 13px 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 12px;
+}
+
+.alert-success {
+    background: #eaf7ec;
+    color: #237b34;
+    border: 1px solid #ccebd2;
+}
+
+.alert-danger {
+    background: #fff0f0;
+    color: #c62828;
+    border: 1px solid #f1c7c7;
 }
 
 
@@ -1429,64 +1756,34 @@ select {
 ===================================================== */
 
 .btn {
-    border: 0;
-    border-radius: 7px;
-    padding: 10px 16px;
-    cursor: pointer;
-    font-size: 12px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    border: 0;
+    border-radius: 7px;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
     transition: .2s;
 }
 
 .btn-primary {
-    background: #51b848;
+    background: #278c3c;
     color: #fff;
 }
 
 .btn-primary:hover {
-    background: #3f9f39;
-}
-
-.btn-danger {
-    background: #dc3545;
-    color: #fff;
+    background: #1f7532;
 }
 
 .btn-secondary {
-    background: #6c757d;
-    color: #fff;
+    background: #eef1f4;
+    color: #555;
 }
 
-.btn-warning {
-    background: #ffc107;
-    color: #222;
-}
-
-
-/* =====================================================
-   ALERT
-===================================================== */
-
-.alert {
-    padding: 13px 16px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    font-size: 12px;
-}
-
-.alert-success {
-    background: #e8f7eb;
-    color: #26733a;
-    border: 1px solid #c8e9ce;
-}
-
-.alert-danger {
-    background: #fdecec;
-    color: #a32834;
-    border: 1px solid #f3c5ca;
+.btn-secondary:hover {
+    background: #e2e6ea;
 }
 
 
@@ -1496,46 +1793,31 @@ select {
 
 .filter-box {
     background: #fff;
-    padding: 17px;
+    border: 1px solid #e8ebef;
     border-radius: 10px;
+    padding: 18px;
     margin-bottom: 20px;
-    border: 1px solid #e9edf1;
 }
 
 .filter-form {
     display: grid;
-    grid-template-columns:
-        minmax(220px, 1fr)
-        180px
-        180px
-        auto
-        auto;
+    grid-template-columns: 2fr 1fr 1fr auto auto;
     gap: 10px;
 }
 
 .form-control {
     width: 100%;
-    min-height: 43px;
-    border: 1px solid #d9dde2;
+    border: 1px solid #dfe4e8;
     border-radius: 7px;
-    padding: 0 12px;
-    outline: none;
-    font-size: 12px;
+    padding: 10px 12px;
     background: #fff;
     color: #333;
-}
-
-textarea.form-control {
-    min-height: 100px;
-    padding-top: 11px;
-    resize: vertical;
+    font-size: 12px;
+    outline: none;
 }
 
 .form-control:focus {
-    border-color: #51b848;
-    box-shadow:
-        0 0 0 3px
-        rgba(81,184,72,.1);
+    border-color: #278c3c;
 }
 
 
@@ -1545,15 +1827,10 @@ textarea.form-control {
 
 .card {
     background: #fff;
-    border-radius: 11px;
-    border: 1px solid #e7ebef;
+    border: 1px solid #e8ebef;
+    border-radius: 10px;
     overflow: hidden;
 }
-
-
-/* =====================================================
-   TABLE
-===================================================== */
 
 .table-wrap {
     width: 100%;
@@ -1563,38 +1840,34 @@ textarea.form-control {
 table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 1100px;
 }
 
-th,
-td {
-    padding: 13px 14px;
-    text-align: left;
-    border-bottom: 1px solid #edf0f3;
-    font-size: 12px;
-}
-
-th {
-    background: #fafbfc;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .4px;
+table th {
+    background: #f8f9fa;
     color: #777;
+    font-size: 10px;
     font-weight: 600;
+    text-align: left;
+    padding: 13px 12px;
+    border-bottom: 1px solid #e5e8eb;
+    white-space: nowrap;
 }
 
-tbody tr:hover {
-    background: #fcfdfd;
+table td {
+    padding: 14px 12px;
+    border-bottom: 1px solid #edf0f3;
+    vertical-align: top;
+    font-size: 11px;
 }
 
-
-/* =====================================================
-   ORDER
-===================================================== */
+table tr:last-child td {
+    border-bottom: 0;
+}
 
 .order-number {
-    font-weight: 700;
     color: #278c3c;
+    font-weight: 700;
+    font-size: 12px;
 }
 
 .customer-name {
@@ -1603,28 +1876,42 @@ tbody tr:hover {
 }
 
 .customer-mobile {
-    color: #888;
     font-size: 10px;
+    color: #888;
     margin-top: 4px;
 }
 
 .address {
-    max-width: 240px;
-    line-height: 1.5;
-    color: #666;
-    font-size: 11px;
+    max-width: 220px;
+    line-height: 1.6;
+    color: #555;
 }
 
 .amount {
-    color: #278c3c;
     font-weight: 700;
-    white-space: nowrap;
+    color: #278c3c;
 }
 
 .action-buttons {
     display: flex;
-    align-items: center;
     gap: 5px;
+    align-items: center;
+}
+
+.delivery-person {
+    min-width: 130px;
+}
+
+.delivery-person-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: #333;
+}
+
+.delivery-person-mobile {
+    font-size: 9px;
+    color: #888;
+    margin-top: 3px;
 }
 
 
@@ -1633,37 +1920,49 @@ tbody tr:hover {
 ===================================================== */
 
 .badge {
-    display: inline-block;
-    padding: 5px 9px;
+    display: inline-flex;
+    padding: 5px 8px;
     border-radius: 20px;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     white-space: nowrap;
 }
 
-.badge-success {
-    background: #e4f7e7;
-    color: #278139;
-}
-
-.badge-danger {
-    background: #fde7e9;
-    color: #b42b38;
-}
-
 .badge-warning {
-    background: #fff4d6;
-    color: #8a6900;
+    background: #fff5d9;
+    color: #9a6a00;
 }
 
 .badge-info {
-    background: #e6f1ff;
+    background: #e8f3ff;
     color: #1769aa;
 }
 
+.badge-success {
+    background: #eaf7ec;
+    color: #278c3c;
+}
+
+.badge-danger {
+    background: #fff0f0;
+    color: #c62828;
+}
+
 .badge-secondary {
-    background: #edf0f2;
-    color: #667;
+    background: #eef1f4;
+    color: #666;
+}
+
+
+/* =====================================================
+   EMPTY
+===================================================== */
+
+.empty {
+    text-align: center;
+    padding: 45px 20px !important;
+    color: #999;
+    font-size: 12px;
 }
 
 
@@ -1673,22 +1972,22 @@ tbody tr:hover {
 
 .details-card {
     background: #fff;
-    border-radius: 11px;
-    border: 1px solid #e7ebef;
-    padding: 25px;
+    border: 1px solid #e8ebef;
+    border-radius: 10px;
+    padding: 22px;
 }
 
 .details-grid {
     display: grid;
-    grid-template-columns:
-        repeat(2, minmax(0, 1fr));
-    gap: 20px;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
 }
 
 .detail-box {
+    background: #fafbfc;
     border: 1px solid #edf0f3;
-    border-radius: 9px;
-    padding: 17px;
+    border-radius: 8px;
+    padding: 14px;
 }
 
 .detail-box.full {
@@ -1705,8 +2004,7 @@ tbody tr:hover {
 
 .detail-value {
     color: #333;
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
     line-height: 1.6;
 }
 
@@ -1716,13 +2014,12 @@ tbody tr:hover {
 ===================================================== */
 
 .price-table {
-    width: 100%;
-    min-width: 0;
+    margin-top: 10px;
 }
 
 .price-table td {
-    padding: 8px 0;
-    border: 0;
+    padding: 9px 0;
+    border-bottom: 1px solid #edf0f3;
 }
 
 .price-table td:last-child {
@@ -1730,11 +2027,12 @@ tbody tr:hover {
     font-weight: 600;
 }
 
-.total-row td {
-    border-top: 1px solid #ddd;
-    padding-top: 13px;
-    font-size: 15px;
+.price-table .total-row td {
+    font-size: 14px;
+    font-weight: 700;
     color: #278c3c;
+    border-bottom: 0;
+    padding-top: 13px;
 }
 
 
@@ -1743,16 +2041,15 @@ tbody tr:hover {
 ===================================================== */
 
 .update-card {
-    background: #f9fafb;
-    border: 1px solid #e8ecef;
+    background: #fff;
+    border: 1px solid #e8ebef;
     border-radius: 10px;
     padding: 20px;
 }
 
 .update-grid {
     display: grid;
-    grid-template-columns:
-        repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 15px;
 }
 
@@ -1760,42 +2057,45 @@ tbody tr:hover {
     display: block;
     font-size: 11px;
     font-weight: 600;
+    color: #555;
     margin-bottom: 7px;
-    color: #444;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 5px;
+    color: #999;
+    font-size: 9px;
 }
 
 .form-actions {
-    margin-top: 18px;
     display: flex;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #edf0f3;
+}
+
+
+/* =====================================================
+   DELIVERY BOX
+===================================================== */
+
+.delivery-status-box {
+    display: flex;
+    align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
-
-/* =====================================================
-   EMPTY
-===================================================== */
-
-.empty {
-    padding: 60px 20px !important;
-    text-align: center !important;
-    color: #999;
+.delivery-info {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #555;
 }
 
-
-/* =====================================================
-   MOBILE
-===================================================== */
-
-.mobile-menu-btn {
-    display: none;
-    width: 38px;
-    height: 38px;
-    border: 0;
-    border-radius: 8px;
-    background: #eaf7ec;
-    color: #278c3c;
-    font-size: 18px;
-    cursor: pointer;
+.delivery-info strong {
+    color: #333;
 }
 
 
@@ -1803,7 +2103,7 @@ tbody tr:hover {
    RESPONSIVE
 ===================================================== */
 
-@media (max-width: 1050px) {
+@media (max-width: 1100px) {
 
     .filter-form {
         grid-template-columns: 1fr 1fr;
@@ -1815,11 +2115,7 @@ tbody tr:hover {
 
     .details-grid,
     .update-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .detail-box.full {
-        grid-column: auto;
+        grid-template-columns: 1fr 1fr;
     }
 }
 
@@ -1852,10 +2148,13 @@ tbody tr:hover {
         padding: 18px;
     }
 
-    .topbar-left {
-        display: flex;
-        align-items: center;
-        gap: 10px;
+    .details-grid,
+    .update-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .detail-box.full {
+        grid-column: auto;
     }
 }
 
@@ -1873,6 +2172,7 @@ tbody tr:hover {
     .page-heading {
         flex-direction: column;
         align-items: flex-start;
+        gap: 10px;
     }
 
     .filter-form {
@@ -2120,7 +2420,9 @@ tbody tr:hover {
 </div>
 
 
-<!-- FILTER -->
+<!-- =====================================================
+     FILTER
+===================================================== -->
 
 <div class="filter-box">
 
@@ -2134,7 +2436,7 @@ tbody tr:hover {
         name="search"
         class="form-control search-input"
         placeholder="Search order number, customer, mobile, city..."
-        value="<?= htmlspecialchars($search) ?>"
+        value="<?= htmlspecialchars($search ?? '') ?>"
     >
 
 
@@ -2153,7 +2455,7 @@ tbody tr:hover {
 
             <option
                 value="<?= htmlspecialchars($status) ?>"
-                <?= $orderStatus === $status
+                <?= ($orderStatus ?? '') === $status
                     ? 'selected'
                     : ''
                 ?>
@@ -2191,7 +2493,7 @@ tbody tr:hover {
 
             <option
                 value="<?= htmlspecialchars($status) ?>"
-                <?= $paymentStatus === $status
+                <?= ($paymentStatus ?? '') === $status
                     ? 'selected'
                     : ''
                 ?>
@@ -2217,9 +2519,9 @@ tbody tr:hover {
 
 
     <?php if (
-        $search !== '' ||
-        $orderStatus !== '' ||
-        $paymentStatus !== ''
+        ($search ?? '') !== '' ||
+        ($orderStatus ?? '') !== '' ||
+        ($paymentStatus ?? '') !== ''
     ): ?>
 
         <a
@@ -2236,7 +2538,9 @@ tbody tr:hover {
 </div>
 
 
-<!-- TABLE -->
+<!-- =====================================================
+     TABLE
+===================================================== -->
 
 <div class="card">
 
@@ -2270,6 +2574,10 @@ tbody tr:hover {
 
     <th>
         Order Status
+    </th>
+
+    <th>
+        Delivery Boy
     </th>
 
     <th>
@@ -2473,6 +2781,53 @@ $paymentBadge =
 
 <td>
 
+    <?php if (
+        !empty($row['delivery_boy_id']) &&
+        !empty($row['delivery_boy_name'])
+    ): ?>
+
+        <div class="delivery-person">
+
+            <div class="delivery-person-name">
+
+                🚚
+                <?= htmlspecialchars(
+                    $row['delivery_boy_name']
+                ) ?>
+
+            </div>
+
+            <?php if (
+                !empty($row['delivery_boy_mobile'])
+            ): ?>
+
+                <div class="delivery-person-mobile">
+
+                    <?= htmlspecialchars(
+                        $row['delivery_boy_mobile']
+                    ) ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </div>
+
+    <?php else: ?>
+
+        <span
+            class="badge badge-secondary"
+        >
+            Unassigned
+        </span>
+
+    <?php endif; ?>
+
+</td>
+
+
+<td>
+
     <div
         style="
             font-size:11px;
@@ -2541,7 +2896,7 @@ $paymentBadge =
 <tr>
 
 <td
-    colspan="8"
+    colspan="9"
     class="empty"
 >
 
@@ -2550,9 +2905,9 @@ $paymentBadge =
     <br><br>
 
     <?php if (
-        $search !== '' ||
-        $orderStatus !== '' ||
-        $paymentStatus !== ''
+        ($search ?? '') !== '' ||
+        ($orderStatus ?? '') !== '' ||
+        ($paymentStatus ?? '') !== ''
     ): ?>
 
         No orders found
@@ -2728,14 +3083,6 @@ $paymentBadge =
 
     <div class="detail-value">
 
-        <?= htmlspecialchars(
-            strtoupper(
-                $order['payment_method']
-            )
-        ) ?>
-
-        <br><br>
-
         <span
             class="
                 badge
@@ -2747,6 +3094,23 @@ $paymentBadge =
 
             <?= htmlspecialchars(
                 $paymentBadge[0]
+            ) ?>
+
+        </span>
+
+        <br>
+
+        <span
+            style="
+                font-size:10px;
+                color:#888;
+            "
+        >
+
+            <?= htmlspecialchars(
+                strtoupper(
+                    $order['payment_method']
+                )
             ) ?>
 
         </span>
@@ -2797,6 +3161,113 @@ $paymentBadge =
     <div class="detail-value">
 
         #<?= (int)$order['user_id'] ?>
+
+    </div>
+
+</div>
+
+
+<!-- DELIVERY BOY -->
+
+<div class="detail-box">
+
+    <div class="detail-title">
+        Delivery Boy
+    </div>
+
+    <div class="detail-value">
+
+        <?php if (
+            !empty($order['delivery_boy_id'])
+        ): ?>
+
+            <strong>
+                🚚
+                <?= htmlspecialchars(
+                    $order['delivery_boy_name']
+                    ?? 'Assigned'
+                ) ?>
+            </strong>
+
+            <?php if (
+                !empty(
+                    $order['delivery_boy_mobile']
+                )
+            ): ?>
+
+                <br>
+
+                <span
+                    style="
+                        color:#888;
+                        font-size:10px;
+                    "
+                >
+
+                    <?= htmlspecialchars(
+                        $order['delivery_boy_mobile']
+                    ) ?>
+
+                </span>
+
+            <?php endif; ?>
+
+        <?php else: ?>
+
+            <span class="badge badge-secondary">
+                Unassigned
+            </span>
+
+        <?php endif; ?>
+
+    </div>
+
+</div>
+
+
+<!-- DELIVERY STATUS -->
+
+<div class="detail-box">
+
+    <div class="detail-title">
+        Delivery Status
+    </div>
+
+    <div class="detail-value">
+
+        <?php if ($delivery): ?>
+
+            <?php
+
+            $deliveryBadge =
+                getDeliveryStatusBadge(
+                    $delivery['status']
+                );
+
+            ?>
+
+            <span
+                class="
+                    badge
+                    badge-<?= htmlspecialchars(
+                        $deliveryBadge[1]
+                    ) ?>
+                "
+            >
+
+                <?= htmlspecialchars(
+                    $deliveryBadge[0]
+                ) ?>
+
+            </span>
+
+        <?php else: ?>
+
+            <span class="badge badge-secondary">
+                No Delivery Record
+            </span>
+
+        <?php endif; ?>
 
     </div>
 
@@ -2911,56 +3382,29 @@ $paymentBadge =
 
                     <tr>
 
-                        <th
-                            style="
-                                padding:11px 8px;
-                                text-align:left;
-                                background:#f8f9fa;
-                                color:#777;
-                                font-size:10px;
-                                border-bottom:1px solid #e5e8eb;
-                            "
-                        >
+                        <th>
                             Medicine
                         </th>
 
-
                         <th
                             style="
-                                padding:11px 8px;
                                 text-align:center;
-                                background:#f8f9fa;
-                                color:#777;
-                                font-size:10px;
-                                border-bottom:1px solid #e5e8eb;
                             "
                         >
                             Qty
                         </th>
 
-
                         <th
                             style="
-                                padding:11px 8px;
                                 text-align:right;
-                                background:#f8f9fa;
-                                color:#777;
-                                font-size:10px;
-                                border-bottom:1px solid #e5e8eb;
                             "
                         >
                             Unit Price
                         </th>
 
-
                         <th
                             style="
-                                padding:11px 8px;
                                 text-align:right;
-                                background:#f8f9fa;
-                                color:#777;
-                                font-size:10px;
-                                border-bottom:1px solid #e5e8eb;
                             "
                         >
                             Total
@@ -2980,18 +3424,12 @@ $paymentBadge =
 
                     <tr>
 
-                        <td
-                            style="
-                                padding:12px 8px;
-                                border-bottom:1px solid #edf0f3;
-                            "
-                        >
+                        <td>
 
                             <div
                                 style="
                                     font-size:12px;
                                     font-weight:600;
-                                    color:#333;
                                 "
                             >
 
@@ -3011,9 +3449,7 @@ $paymentBadge =
                             >
 
                                 Medicine ID:
-                                <?= (int)$item[
-                                    'medicine_id'
-                                ] ?>
+                                <?= (int)$item['medicine_id'] ?>
 
                             </div>
 
@@ -3022,25 +3458,19 @@ $paymentBadge =
 
                         <td
                             style="
-                                padding:12px 8px;
                                 text-align:center;
-                                border-bottom:1px solid #edf0f3;
                                 font-weight:600;
                             "
                         >
 
-                            <?= (int)$item[
-                                'quantity'
-                            ] ?>
+                            <?= (int)$item['quantity'] ?>
 
                         </td>
 
 
                         <td
                             style="
-                                padding:12px 8px;
                                 text-align:right;
-                                border-bottom:1px solid #edf0f3;
                             "
                         >
 
@@ -3053,9 +3483,7 @@ $paymentBadge =
 
                         <td
                             style="
-                                padding:12px 8px;
                                 text-align:right;
-                                border-bottom:1px solid #edf0f3;
                                 font-weight:700;
                                 color:#278c3c;
                             "
@@ -3080,14 +3508,7 @@ $paymentBadge =
 
     <?php else: ?>
 
-        <div
-            style="
-                padding:25px 10px;
-                text-align:center;
-                color:#999;
-                font-size:12px;
-            "
-        >
+        <div class="empty">
 
             💊 No medicines found for this order.
 
@@ -3098,7 +3519,9 @@ $paymentBadge =
 </div>
 
 
-<!-- PRICE -->
+<!-- =================================================
+     PRICE
+================================================= -->
 
 <div class="detail-box full">
 
@@ -3182,7 +3605,181 @@ $paymentBadge =
 </div>
 
 
-<!-- ADMIN NOTE -->
+<!-- =================================================
+     DELIVERY INFORMATION
+================================================= -->
+
+<?php if ($delivery): ?>
+
+<div class="detail-box full">
+
+    <div class="detail-title">
+        Delivery Information
+    </div>
+
+
+    <div class="delivery-status-box">
+
+        <?php
+
+        $deliveryBadge =
+            getDeliveryStatusBadge(
+                $delivery['status']
+            );
+
+        ?>
+
+        <span
+            class="
+                badge
+                badge-<?= htmlspecialchars(
+                    $deliveryBadge[1]
+                ) ?>
+            "
+        >
+
+            <?= htmlspecialchars(
+                $deliveryBadge[0]
+            ) ?>
+
+        </span>
+
+
+        <?php if (
+            !empty(
+                $delivery['delivery_person_name']
+            )
+        ): ?>
+
+            <strong
+                style="
+                    font-size:11px;
+                "
+            >
+
+                🚚
+                <?= htmlspecialchars(
+                    $delivery[
+                        'delivery_person_name'
+                    ]
+                ) ?>
+
+            </strong>
+
+        <?php endif; ?>
+
+    </div>
+
+
+    <?php if (
+        !empty(
+            $delivery['delivery_person_mobile']
+        )
+    ): ?>
+
+        <div class="delivery-info">
+
+            Mobile:
+            <strong>
+                <?= htmlspecialchars(
+                    $delivery[
+                        'delivery_person_mobile'
+                    ]
+                ) ?>
+            </strong>
+
+        </div>
+
+    <?php endif; ?>
+
+
+    <?php if (
+        !empty(
+            $delivery['assigned_at']
+        )
+    ): ?>
+
+        <div class="delivery-info">
+
+            Assigned:
+            <strong>
+                <?= htmlspecialchars(
+                    date(
+                        'd M Y, h:i A',
+                        strtotime(
+                            $delivery['assigned_at']
+                        )
+                    )
+                ) ?>
+            </strong>
+
+        </div>
+
+    <?php endif; ?>
+
+
+    <?php if (
+        !empty(
+            $delivery['out_for_delivery_at']
+        )
+    ): ?>
+
+        <div class="delivery-info">
+
+            Out for Delivery:
+            <strong>
+                <?= htmlspecialchars(
+                    date(
+                        'd M Y, h:i A',
+                        strtotime(
+                            $delivery[
+                                'out_for_delivery_at'
+                            ]
+                        )
+                    )
+                ) ?>
+            </strong>
+
+        </div>
+
+    <?php endif; ?>
+
+
+    <?php if (
+        !empty(
+            $delivery['delivered_at']
+        )
+    ): ?>
+
+        <div class="delivery-info">
+
+            Delivered:
+            <strong>
+                <?= htmlspecialchars(
+                    date(
+                        'd M Y, h:i A',
+                        strtotime(
+                            $delivery[
+                                'delivered_at'
+                            ]
+                        )
+                    )
+                ) ?>
+            </strong>
+
+        </div>
+
+    <?php endif; ?>
+
+
+</div>
+
+<?php endif; ?>
+
+
+<!-- =================================================
+     ADMIN NOTE
+================================================= -->
 
 <?php if (
     !empty(
@@ -3312,6 +3909,10 @@ $paymentBadge =
 
                     </select>
 
+                    <small>
+                        Order status automatically controls delivery status.
+                    </small>
+
                 </div>
 
 
@@ -3356,6 +3957,80 @@ $paymentBadge =
                 </div>
 
 
+                <!-- DELIVERY BOY -->
+
+                <div class="form-group">
+
+                    <label>
+                        Delivery Boy
+                    </label>
+
+
+                    <select
+                        name="delivery_boy_id"
+                        class="form-control"
+                    >
+
+                        <option value="">
+                            — Unassigned —
+                        </option>
+
+
+                        <?php foreach (
+                            $deliveryBoys
+                            as $deliveryBoy
+                        ): ?>
+
+                            <option
+                                value="<?= (int)$deliveryBoy['id'] ?>"
+                                <?= (
+                                    (int)($order['delivery_boy_id'] ?? 0) ===
+                                    (int)$deliveryBoy['id']
+                                )
+                                    ? 'selected'
+                                    : ''
+                                ?>
+                            >
+
+                                <?= htmlspecialchars(
+                                    $deliveryBoy['name']
+                                ) ?>
+
+                                -
+                                <?= htmlspecialchars(
+                                    $deliveryBoy['mobile']
+                                ) ?>
+
+                            </option>
+
+                        <?php endforeach; ?>
+
+                    </select>
+
+
+                    <?php if (
+                        empty($deliveryBoys)
+                    ): ?>
+
+                        <small
+                            style="
+                                color:#c62828;
+                            "
+                        >
+                            No active delivery boys found.
+                        </small>
+
+                    <?php else: ?>
+
+                        <small>
+                            Only active users with delivery role are shown.
+                        </small>
+
+                    <?php endif; ?>
+
+                </div>
+
+
                 <!-- ADMIN NOTE -->
 
                 <div
@@ -3374,6 +4049,7 @@ $paymentBadge =
                         name="admin_note"
                         class="form-control"
                         placeholder="Add internal note about this order..."
+                        rows="4"
                     ><?= htmlspecialchars(
                         $order['admin_note'] ?? ''
                     ) ?></textarea>
