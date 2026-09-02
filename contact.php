@@ -1363,7 +1363,7 @@ require_once "includes/header.php";
 
 <section class="contact-hero">
 
-```
+
 <div class="container">
 
     <div class="contact-hero-content">
@@ -1398,7 +1398,7 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
+
 
 </section>
 
@@ -1408,7 +1408,7 @@ require_once "includes/header.php";
 
 <section class="contact-info-wrapper">
 
-```
+
 <div class="container">
 
     <div class="row">
@@ -1521,7 +1521,7 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
+
 
 </section>
 
@@ -1531,7 +1531,7 @@ require_once "includes/header.php";
 
 <section class="contact-section">
 
-```
+
 <div class="container">
 
     <div class="row">
@@ -1977,7 +1977,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -1987,7 +1986,6 @@ require_once "includes/header.php";
 
 <section class="location-section">
 
-```
 <div class="container">
 
     <div class="location-box">
@@ -2038,7 +2036,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -2048,7 +2045,7 @@ require_once "includes/header.php";
 
 <section class="contact-reasons">
 
-```
+
 <div class="container">
 
 
@@ -2212,7 +2209,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -2222,7 +2218,6 @@ require_once "includes/header.php";
 
 <section class="contact-cta">
 
-```
 <div class="container">
 
     <div class="contact-cta-box">

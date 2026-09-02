@@ -1446,7 +1446,6 @@ require_once "includes/header.php";
 
 <section class="about-hero">
 
-```
 <div class="container">
 
     <div class="about-hero-content">
@@ -1512,7 +1511,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -1522,7 +1520,6 @@ require_once "includes/header.php";
 
 <section class="about-stats">
 
-```
 <div class="container">
 
     <div class="row">
@@ -1623,7 +1620,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -1633,7 +1629,6 @@ require_once "includes/header.php";
 
 <section class="about-section">
 
-```
 <div class="container">
 
     <div class="row align-items-center">
@@ -1737,7 +1732,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -1747,7 +1741,6 @@ require_once "includes/header.php";
 
 <section class="about-section about-section-light">
 
-```
 <div class="container">
 
 
@@ -1851,7 +1844,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -1861,7 +1853,6 @@ require_once "includes/header.php";
 
 <section class="about-section">
 
-```
 <div class="container">
 
 
@@ -2025,7 +2016,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -2035,7 +2025,6 @@ require_once "includes/header.php";
 
 <section class="about-section about-section-light">
 
-```
 <div class="container">
 
 
@@ -2208,7 +2197,6 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
 
 </section>
 
@@ -2218,7 +2206,6 @@ require_once "includes/header.php";
 
 <section class="about-section about-commitment">
 
-```
 <div class="container">
 
     <div class="row align-items-center">
@@ -2373,7 +2360,7 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
+
 
 </section>
 
@@ -2383,7 +2370,6 @@ require_once "includes/header.php";
 
 <section class="about-cta">
 
-```
 <div class="container">
 
     <div class="about-cta-box">
@@ -2438,7 +2424,7 @@ require_once "includes/header.php";
     </div>
 
 </div>
-```
+
 
 </section>
 
