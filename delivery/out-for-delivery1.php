@@ -19,6 +19,36 @@ if (
 
 
 // =====================================================
+// MSG91 CONFIGURATION
+// =====================================================
+//
+// IMPORTANT:
+// Replace these values with your actual MSG91 credentials.
+//
+// AUTH KEY  -> MSG91 Dashboard API/Auth Key
+// FLOW ID   -> Your approved OTP SMS Flow ID
+// SENDER ID -> Your approved Sender ID
+//
+// Never share your Auth Key publicly.
+//
+
+define(
+    'MSG91_AUTH_KEY',
+    'YOUR_MSG91_AUTH_KEY'
+);
+
+define(
+    'MSG91_FLOW_ID',
+    'YOUR_MSG91_FLOW_ID'
+);
+
+define(
+    'MSG91_SENDER_ID',
+    'YOUR_SENDER_ID'
+);
+
+
+// =====================================================
 // HELPER
 // =====================================================
 
@@ -33,24 +63,342 @@ function e($value)
 
 
 // =====================================================
+// MSG91 SEND OTP SMS
+// =====================================================
+
+function sendDeliveryOtpSms(
+    $mobile,
+    $otp,
+    $orderNumber
+) {
+
+    // -------------------------------------------------
+    // Remove spaces, +, -, brackets etc.
+    // -------------------------------------------------
+
+    $mobile = preg_replace(
+        '/[^0-9]/',
+        '',
+        (string)$mobile
+    );
+
+
+    // -------------------------------------------------
+    // India mobile number
+    // -------------------------------------------------
+
+    if (strlen($mobile) === 10) {
+
+        $mobile = '91' . $mobile;
+
+    } elseif (
+        strlen($mobile) === 12 &&
+        substr($mobile, 0, 2) === '91'
+    ) {
+
+        // Already correct
+
+    } else {
+
+        return [
+            'success' => false,
+            'message' => 'Invalid customer mobile number.'
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // MSG91 credentials check
+    // -------------------------------------------------
+
+    if (
+        MSG91_AUTH_KEY === 'YOUR_MSG91_AUTH_KEY' ||
+        MSG91_FLOW_ID === 'YOUR_MSG91_FLOW_ID' ||
+        MSG91_SENDER_ID === 'YOUR_SENDER_ID'
+    ) {
+
+        return [
+            'success' => false,
+            'message' => 'MSG91 configuration is incomplete.'
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // MSG91 FLOW API
+    // -------------------------------------------------
+
+    $url =
+        'https://api.msg91.com/api/v5/flow/';
+
+
+    // -------------------------------------------------
+    // FLOW VARIABLES
+    //
+    // VAR1 = OTP
+    // VAR2 = Order Number
+    //
+    // These names MUST match your MSG91 Flow variables.
+    // -------------------------------------------------
+
+    $payload = [
+
+        'flow_id' =>
+            MSG91_FLOW_ID,
+
+        'sender' =>
+            MSG91_SENDER_ID,
+
+        'recipients' => [
+
+            [
+
+                'mobiles' =>
+                    $mobile,
+
+                'VAR1' =>
+                    (string)$otp,
+
+                'VAR2' =>
+                    (string)$orderNumber
+
+            ]
+
+        ]
+
+    ];
+
+
+    // -------------------------------------------------
+    // JSON
+    // -------------------------------------------------
+
+    $jsonPayload =
+        json_encode(
+            $payload
+        );
+
+
+    if ($jsonPayload === false) {
+
+        return [
+            'success' => false,
+            'message' => 'Unable to prepare MSG91 request.'
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // CURL
+    // -------------------------------------------------
+
+    $ch = curl_init(
+        $url
+    );
+
+
+    curl_setopt_array(
+        $ch,
+        [
+
+            CURLOPT_RETURNTRANSFER =>
+                true,
+
+            CURLOPT_POST =>
+                true,
+
+            CURLOPT_POSTFIELDS =>
+                $jsonPayload,
+
+            CURLOPT_HTTPHEADER =>
+                [
+
+                    'Content-Type: application/json',
+
+                    'authkey: ' .
+                    MSG91_AUTH_KEY
+
+                ],
+
+            CURLOPT_CONNECTTIMEOUT =>
+                10,
+
+            CURLOPT_TIMEOUT =>
+                20,
+
+            CURLOPT_SSL_VERIFYPEER =>
+                true,
+
+            CURLOPT_SSL_VERIFYHOST =>
+                2
+
+        ]
+    );
+
+
+    $response =
+        curl_exec($ch);
+
+
+    $curlError =
+        curl_error($ch);
+
+
+    $httpCode =
+        (int)curl_getinfo(
+            $ch,
+            CURLINFO_HTTP_CODE
+        );
+
+
+    curl_close($ch);
+
+
+    // -------------------------------------------------
+    // CURL ERROR
+    // -------------------------------------------------
+
+    if ($response === false) {
+
+        return [
+
+            'success' => false,
+
+            'message' =>
+                'MSG91 connection failed: ' .
+                $curlError
+
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // HTTP ERROR
+    // -------------------------------------------------
+
+    if (
+        $httpCode < 200 ||
+        $httpCode >= 300
+    ) {
+
+        return [
+
+            'success' => false,
+
+            'message' =>
+                'MSG91 returned HTTP ' .
+                $httpCode
+
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // DECODE RESPONSE
+    // -------------------------------------------------
+
+    $responseData =
+        json_decode(
+            $response,
+            true
+        );
+
+
+    if (
+        !is_array($responseData)
+    ) {
+
+        return [
+
+            'success' => false,
+
+            'message' =>
+                'Invalid response received from MSG91.'
+
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // MSG91 SUCCESS
+    // -------------------------------------------------
+
+    if (
+        isset($responseData['type']) &&
+        strtolower(
+            (string)$responseData['type']
+        ) === 'success'
+    ) {
+
+        return [
+
+            'success' => true,
+
+            'message' =>
+                'OTP SMS sent successfully.'
+
+        ];
+
+    }
+
+
+    // -------------------------------------------------
+    // FAILURE
+    // -------------------------------------------------
+
+    $apiMessage =
+        $responseData['message']
+        ?? 'MSG91 could not send the OTP SMS.';
+
+
+    return [
+
+        'success' => false,
+
+        'message' =>
+            (string)$apiMessage
+
+    ];
+}
+
+
+// =====================================================
 // DELIVERY BOY DATA
 // =====================================================
 
-$deliveryBoyId = (int)$_SESSION['user_id'];
-$deliveryBoyName = $_SESSION['name'] ?? 'Delivery Boy';
+$deliveryBoyId =
+    (int)$_SESSION['user_id'];
+
+$deliveryBoyName =
+    $_SESSION['name']
+    ?? 'Delivery Boy';
 
 
 // =====================================================
 // DELIVERY ID
 // =====================================================
 
-$deliveryId = isset($_POST['delivery_id'])
-    ? (int)$_POST['delivery_id']
-    : (int)($_GET['delivery_id'] ?? 0);
+$deliveryId =
+    isset($_POST['delivery_id'])
+        ? (int)$_POST['delivery_id']
+        : (int)($_GET['delivery_id'] ?? 0);
+
 
 if ($deliveryId <= 0) {
-    $_SESSION['delivery_error'] = "Invalid delivery request.";
-    header("Location: orders.php");
+
+    $_SESSION['delivery_error'] =
+        "Invalid delivery request.";
+
+    header(
+        "Location: orders.php"
+    );
+
     exit;
 }
 
@@ -60,14 +408,18 @@ if ($deliveryId <= 0) {
 // =====================================================
 
 $sql = "
+
     SELECT
+
         d.id AS delivery_id,
         d.order_id,
         d.delivery_person_id,
         d.status AS delivery_status,
+
         d.delivery_otp,
         d.delivery_note,
         d.failure_reason,
+
         d.assigned_at,
         d.picked_up_at,
         d.out_for_delivery_at,
@@ -75,16 +427,21 @@ $sql = "
 
         o.id AS order_id,
         o.order_number,
+
         o.customer_name,
         o.customer_mobile,
+
         o.delivery_address,
         o.city,
         o.state,
         o.pincode,
+
         o.total_amount,
+
         o.payment_method,
         o.payment_status,
         o.order_status,
+
         o.created_at
 
     FROM deliveries d
@@ -98,11 +455,22 @@ $sql = "
     LIMIT 1
 ";
 
-$stmt = mysqli_prepare($conn, $sql);
+
+$stmt =
+    mysqli_prepare(
+        $conn,
+        $sql
+    );
+
 
 if (!$stmt) {
-    die("Database error.");
+
+    die(
+        "Database error."
+    );
+
 }
+
 
 mysqli_stmt_bind_param(
     $stmt,
@@ -111,13 +479,27 @@ mysqli_stmt_bind_param(
     $deliveryBoyId
 );
 
-mysqli_stmt_execute($stmt);
 
-$result = mysqli_stmt_get_result($stmt);
+mysqli_stmt_execute(
+    $stmt
+);
 
-$delivery = mysqli_fetch_assoc($result);
 
-mysqli_stmt_close($stmt);
+$result =
+    mysqli_stmt_get_result(
+        $stmt
+    );
+
+
+$delivery =
+    mysqli_fetch_assoc(
+        $result
+    );
+
+
+mysqli_stmt_close(
+    $stmt
+);
 
 
 // =====================================================
@@ -129,7 +511,10 @@ if (!$delivery) {
     $_SESSION['delivery_error'] =
         "Delivery not found or this delivery is not assigned to you.";
 
-    header("Location: orders.php");
+    header(
+        "Location: orders.php"
+    );
+
     exit;
 }
 
@@ -138,21 +523,59 @@ if (!$delivery) {
 // PROCESS OUT FOR DELIVERY
 // =====================================================
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST'
+) {
+
 
     // -------------------------------------------------
     // ONLY PICKED UP CAN MOVE OUT FOR DELIVERY
     // -------------------------------------------------
 
-    if ($delivery['delivery_status'] !== 'picked_up') {
+    if (
+        $delivery['delivery_status']
+        !== 'picked_up'
+    ) {
 
         $_SESSION['delivery_error'] =
+
             "This order cannot be marked as out for delivery because its current status is " .
+
             str_replace(
                 '_',
                 ' ',
                 $delivery['delivery_status']
-            ) . ".";
+            ) .
+
+            ".";
+
+
+        header(
+            "Location: order-details.php?delivery_id=" .
+            $deliveryId
+        );
+
+        exit;
+    }
+
+
+    // =================================================
+    // CUSTOMER MOBILE
+    // =================================================
+
+    $customerMobile =
+        trim(
+            (string)(
+                $delivery['customer_mobile']
+                ?? ''
+            )
+        );
+
+
+    if ($customerMobile === '') {
+
+        $_SESSION['delivery_error'] =
+            "Customer mobile number is missing. OTP cannot be sent.";
 
         header(
             "Location: order-details.php?delivery_id=" .
@@ -169,10 +592,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
 
-        $deliveryOtp = (string)random_int(
-            100000,
-            999999
-        );
+        $deliveryOtp =
+            (string)random_int(
+                100000,
+                999999
+            );
 
     } catch (Throwable $e) {
 
@@ -189,42 +613,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 
     // =================================================
+    // SEND OTP THROUGH MSG91
+    // =================================================
+
+    $smsResult =
+        sendDeliveryOtpSms(
+            $customerMobile,
+            $deliveryOtp,
+            $delivery['order_number']
+        );
+
+
+    // =================================================
+    // SMS FAILED
+    // =================================================
+
+    if (
+        !$smsResult['success']
+    ) {
+
+        $_SESSION['delivery_error'] =
+
+            "OTP SMS could not be sent. " .
+            $smsResult['message'] .
+            " Please try again.";
+
+        header(
+            "Location: order-details.php?delivery_id=" .
+            $deliveryId
+        );
+
+        exit;
+    }
+
+
+    // =================================================
     // TRANSACTION
     // =================================================
 
-    mysqli_begin_transaction($conn);
+    mysqli_begin_transaction(
+        $conn
+    );
+
 
     try {
+
 
         // ---------------------------------------------
         // UPDATE DELIVERY
         // ---------------------------------------------
 
         $updateDeliverySql = "
+
             UPDATE deliveries
 
             SET
-                status = 'out_for_delivery',
-                out_for_delivery_at = NOW(),
-                delivery_otp = ?,
-                updated_at = NOW()
+
+                status =
+                    'out_for_delivery',
+
+                out_for_delivery_at =
+                    NOW(),
+
+                delivery_otp =
+                    ?,
+
+                updated_at =
+                    NOW()
 
             WHERE id = ?
+
               AND delivery_person_id = ?
-              AND status = 'picked_up'
+
+              AND status =
+                    'picked_up'
+
         ";
 
-        $updateDeliveryStmt = mysqli_prepare(
-            $conn,
-            $updateDeliverySql
-        );
 
-        if (!$updateDeliveryStmt) {
+        $updateDeliveryStmt =
+            mysqli_prepare(
+                $conn,
+                $updateDeliverySql
+            );
+
+
+        if (
+            !$updateDeliveryStmt
+        ) {
 
             throw new Exception(
                 "Unable to prepare delivery update."
             );
+
         }
+
 
         mysqli_stmt_bind_param(
             $updateDeliveryStmt,
@@ -234,32 +717,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $deliveryBoyId
         );
 
-        if (!mysqli_stmt_execute($updateDeliveryStmt)) {
 
-            mysqli_stmt_close($updateDeliveryStmt);
+        if (
+            !mysqli_stmt_execute(
+                $updateDeliveryStmt
+            )
+        ) {
+
+            mysqli_stmt_close(
+                $updateDeliveryStmt
+            );
+
 
             throw new Exception(
                 "Unable to update delivery status."
             );
+
         }
 
-        $affectedRows = mysqli_stmt_affected_rows(
+
+        $affectedRows =
+            mysqli_stmt_affected_rows(
+                $updateDeliveryStmt
+            );
+
+
+        mysqli_stmt_close(
             $updateDeliveryStmt
         );
-
-        mysqli_stmt_close($updateDeliveryStmt);
 
 
         // ---------------------------------------------
         // VERIFY DELIVERY UPDATE
         // ---------------------------------------------
 
-        if ($affectedRows !== 1) {
+        if (
+            $affectedRows !== 1
+        ) {
 
             throw new Exception(
+
                 "Delivery status could not be changed. " .
                 "It may have already been updated."
+
             );
+
         }
 
 
@@ -268,26 +770,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ---------------------------------------------
 
         $updateOrderSql = "
+
             UPDATE orders
+
             SET
-                order_status = 'out_for_delivery',
-                updated_at = NOW()
+
+                order_status =
+                    'out_for_delivery',
+
+                updated_at =
+                    NOW()
+
             WHERE id = ?
+
         ";
 
-        $updateOrderStmt = mysqli_prepare(
-            $conn,
-            $updateOrderSql
-        );
 
-        if (!$updateOrderStmt) {
+        $updateOrderStmt =
+            mysqli_prepare(
+                $conn,
+                $updateOrderSql
+            );
+
+
+        if (
+            !$updateOrderStmt
+        ) {
 
             throw new Exception(
                 "Unable to prepare order update."
             );
+
         }
 
-        $orderId = (int)$delivery['order_id'];
+
+        $orderId =
+            (int)$delivery['order_id'];
+
 
         mysqli_stmt_bind_param(
             $updateOrderStmt,
@@ -295,23 +814,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $orderId
         );
 
-        if (!mysqli_stmt_execute($updateOrderStmt)) {
 
-            mysqli_stmt_close($updateOrderStmt);
+        if (
+            !mysqli_stmt_execute(
+                $updateOrderStmt
+            )
+        ) {
+
+            mysqli_stmt_close(
+                $updateOrderStmt
+            );
+
 
             throw new Exception(
                 "Unable to update order status."
             );
+
         }
 
-        mysqli_stmt_close($updateOrderStmt);
+
+        mysqli_stmt_close(
+            $updateOrderStmt
+        );
 
 
         // ---------------------------------------------
         // COMMIT
         // ---------------------------------------------
 
-        mysqli_commit($conn);
+        mysqli_commit(
+            $conn
+        );
 
 
         // ---------------------------------------------
@@ -319,10 +852,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ---------------------------------------------
 
         $_SESSION['delivery_success'] =
+
             "Order #" .
             $delivery['order_number'] .
-            " is now out for delivery.";
+            " is now out for delivery. " .
+            "The delivery OTP has been sent to the customer's registered mobile number.";
 
+
+        // ---------------------------------------------
+        // REDIRECT
+        // ---------------------------------------------
 
         header(
             "Location: order-details.php?delivery_id=" .
@@ -331,20 +870,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         exit;
 
-    } catch (Throwable $e) {
 
-        mysqli_rollback($conn);
+    } catch (
+        Throwable $e
+    ) {
+
+
+        mysqli_rollback(
+            $conn
+        );
+
 
         $_SESSION['delivery_error'] =
             $e->getMessage();
 
+
         header(
             "Location: order-details.php?delivery_id=" .
             $deliveryId
         );
 
         exit;
+
     }
+
 }
 
 
@@ -352,32 +901,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // FLASH MESSAGES
 // =====================================================
 
-$successMessage = $_SESSION['delivery_success'] ?? '';
-$errorMessage   = $_SESSION['delivery_error'] ?? '';
+$successMessage =
+    $_SESSION['delivery_success']
+    ?? '';
 
-unset($_SESSION['delivery_success']);
-unset($_SESSION['delivery_error']);
+$errorMessage =
+    $_SESSION['delivery_error']
+    ?? '';
+
+
+unset(
+    $_SESSION['delivery_success']
+);
+
+
+unset(
+    $_SESSION['delivery_error']
+);
 
 
 // =====================================================
 // CURRENT STATUS
 // =====================================================
 
-$currentStatus = $delivery['delivery_status'];
+$currentStatus =
+    $delivery['delivery_status'];
 
-$statusLabel = ucwords(
+
+$statusLabel =
+    ucwords(
+        str_replace(
+            '_',
+            ' ',
+            $currentStatus
+        )
+    );
+
+
+$statusClass =
     str_replace(
         '_',
-        ' ',
-        $currentStatus
-    )
-);
-
-$statusClass = str_replace(
-    '_',
-    '-',
-    strtolower($currentStatus)
-);
+        '-',
+        strtolower(
+            $currentStatus
+        )
+    );
 
 ?>
 
@@ -430,7 +998,6 @@ $statusClass = str_replace(
             min-height: 100vh;
             display: flex;
         }
-
 
         /* =================================================
            SIDEBAR
@@ -497,11 +1064,8 @@ $statusClass = str_replace(
 
         .menu a {
             padding: 13px 15px;
-
             border-radius: 9px;
-
             font-size: 14px;
-
             transition: .2s;
         }
 
@@ -510,19 +1074,15 @@ $statusClass = str_replace(
             background: rgba(255,255,255,.15);
         }
 
-
         /* =================================================
            MAIN
         ================================================= */
 
         .main {
             margin-left: 250px;
-
             width: calc(100% - 250px);
-
             min-height: 100vh;
         }
-
 
         /* =================================================
            TOPBAR
@@ -573,14 +1133,12 @@ $statusClass = str_replace(
             font-weight: 500;
         }
 
-
         /* =================================================
            CONTENT
         ================================================= */
 
         .content {
             padding: 30px;
-
             max-width: 1100px;
         }
 
@@ -598,35 +1156,28 @@ $statusClass = str_replace(
             font-size: 14px;
         }
 
-
         /* =================================================
            ALERTS
         ================================================= */
 
         .alert {
             padding: 14px 17px;
-
             border-radius: 9px;
-
             margin-bottom: 20px;
-
             font-size: 14px;
         }
 
         .alert-success {
             background: #e8f8ef;
             color: #087443;
-
             border: 1px solid #bce8d0;
         }
 
         .alert-error {
             background: #fff0f1;
             color: #b42318;
-
             border: 1px solid #f4c7cb;
         }
-
 
         /* =================================================
            CARD
@@ -634,19 +1185,14 @@ $statusClass = str_replace(
 
         .card {
             background: #fff;
-
             border-radius: 14px;
-
             border: 1px solid #e7eaec;
-
             padding: 25px;
-
             margin-bottom: 20px;
 
             box-shadow:
                 0 4px 18px rgba(0,0,0,.04);
         }
-
 
         /* =================================================
            ORDER HEADER
@@ -654,7 +1200,6 @@ $statusClass = str_replace(
 
         .order-header {
             display: flex;
-
             justify-content: space-between;
             align-items: flex-start;
 
@@ -665,16 +1210,13 @@ $statusClass = str_replace(
 
         .order-title h2 {
             font-size: 21px;
-
             margin-bottom: 7px;
         }
 
         .order-title p {
             font-size: 13px;
-
             color: #718096;
         }
-
 
         /* =================================================
            STATUS
@@ -724,7 +1266,6 @@ $statusClass = str_replace(
             color: #6b7280;
         }
 
-
         /* =================================================
            INFO GRID
         ================================================= */
@@ -740,28 +1281,21 @@ $statusClass = str_replace(
 
         .info-item {
             background: #f8faf9;
-
             padding: 16px;
-
             border-radius: 10px;
         }
 
         .info-label {
             color: #718096;
-
             font-size: 12px;
-
             margin-bottom: 6px;
         }
 
         .info-value {
             font-size: 14px;
-
             font-weight: 500;
-
             line-height: 1.5;
         }
-
 
         /* =================================================
            OUT FOR DELIVERY BOX
@@ -800,20 +1334,15 @@ $statusClass = str_replace(
 
         .delivery-box h3 {
             font-size: 20px;
-
             margin-bottom: 8px;
         }
 
         .delivery-box p {
             color: #718096;
-
             font-size: 14px;
-
             line-height: 1.6;
-
             margin-bottom: 22px;
         }
-
 
         /* =================================================
            BUTTONS
@@ -821,17 +1350,13 @@ $statusClass = str_replace(
 
         .btn-row {
             display: flex;
-
             justify-content: center;
-
             gap: 12px;
-
             flex-wrap: wrap;
         }
 
         .btn {
             border: 0;
-
             cursor: pointer;
 
             padding: 12px 20px;
@@ -843,9 +1368,7 @@ $statusClass = str_replace(
             font-weight: 500;
 
             display: inline-flex;
-
             align-items: center;
-
             justify-content: center;
 
             gap: 7px;
@@ -868,7 +1391,6 @@ $statusClass = str_replace(
         .btn-secondary:hover {
             background: #e1e5e8;
         }
-
 
         /* =================================================
            SECURITY NOTE
@@ -894,7 +1416,6 @@ $statusClass = str_replace(
             text-align: left;
         }
 
-
         /* =================================================
            OTP INFORMATION
         ================================================= */
@@ -917,7 +1438,6 @@ $statusClass = str_replace(
             line-height: 1.6;
         }
 
-
         /* =================================================
            RESPONSIVE
         ================================================= */
@@ -930,15 +1450,14 @@ $statusClass = str_replace(
 
             .main {
                 margin-left: 220px;
-
                 width: calc(100% - 220px);
             }
 
             .info-grid {
                 grid-template-columns: 1fr;
             }
-        }
 
+        }
 
         @media (max-width: 700px) {
 
@@ -948,29 +1467,23 @@ $statusClass = str_replace(
 
             .sidebar {
                 position: relative;
-
                 width: 100%;
-
                 min-height: auto;
             }
 
             .main {
                 margin-left: 0;
-
                 width: 100%;
             }
 
             .menu {
                 flex-direction: row;
-
                 flex-wrap: wrap;
             }
 
             .menu a {
                 flex: 1;
-
                 min-width: 120px;
-
                 text-align: center;
             }
 
@@ -985,8 +1498,8 @@ $statusClass = str_replace(
             .order-header {
                 flex-direction: column;
             }
-        }
 
+        }
 
         @media (max-width: 500px) {
 
@@ -1005,6 +1518,7 @@ $statusClass = str_replace(
             .delivery-box {
                 padding: 24px 15px;
             }
+
         }
 
     </style>
@@ -1078,6 +1592,7 @@ $statusClass = str_replace(
                 Out for Delivery
             </h3>
 
+
             <div class="user-box">
 
                 <div class="avatar">
@@ -1094,9 +1609,12 @@ $statusClass = str_replace(
 
                 </div>
 
+
                 <div class="user-name">
 
-                    <?= e($deliveryBoyName) ?>
+                    <?= e(
+                        $deliveryBoyName
+                    ) ?>
 
                 </div>
 
@@ -1129,7 +1647,9 @@ $statusClass = str_replace(
 
                 <div class="alert alert-success">
 
-                    <?= e($successMessage) ?>
+                    <?= e(
+                        $successMessage
+                    ) ?>
 
                 </div>
 
@@ -1140,7 +1660,9 @@ $statusClass = str_replace(
 
                 <div class="alert alert-error">
 
-                    <?= e($errorMessage) ?>
+                    <?= e(
+                        $errorMessage
+                    ) ?>
 
                 </div>
 
@@ -1158,10 +1680,15 @@ $statusClass = str_replace(
                     <div class="order-title">
 
                         <h2>
-                            Order #<?= e(
+
+                            Order #
+
+                            <?= e(
                                 $delivery['order_number']
                             ) ?>
+
                         </h2>
+
 
                         <p>
 
@@ -1183,7 +1710,9 @@ $statusClass = str_replace(
                         class="status status-<?= e($statusClass) ?>"
                     >
 
-                        <?= e($statusLabel) ?>
+                        <?= e(
+                            $statusLabel
+                        ) ?>
 
                     </span>
 
@@ -1355,6 +1884,7 @@ $statusClass = str_replace(
 
                     <div class="delivery-box">
 
+
                         <div class="delivery-icon">
                             🚚
                         </div>
@@ -1380,6 +1910,7 @@ $statusClass = str_replace(
                                 'Are you sure you are taking this order out for delivery?'
                             );"
                         >
+
 
                             <input
                                 type="hidden"
@@ -1414,11 +1945,14 @@ $statusClass = str_replace(
 
                         <div class="note">
 
-                            <strong>Important:</strong>
+                            <strong>
+                                Important:
+                            </strong>
 
                             Once you start the delivery,
                             a secure 6-digit OTP will be generated
-                            for the customer.
+                            and sent to the customer's registered
+                            mobile number.
 
                             The customer must provide this OTP
                             at the time of successful delivery.
@@ -1428,16 +1962,21 @@ $statusClass = str_replace(
 
                         <div class="otp-info">
 
-                            🔐 <strong>OTP Security:</strong>
+                            🔐 <strong>
+                                OTP Security:
+                            </strong>
 
                             The delivery OTP is stored securely
                             in the delivery record and is
-                            <strong>not displayed to the delivery boy</strong>.
+                            <strong>
+                                not displayed to the delivery boy
+                            </strong>.
 
                             Do not ask the customer for the OTP
                             before reaching the delivery location.
 
                         </div>
+
 
                     </div>
 
@@ -1448,6 +1987,7 @@ $statusClass = str_replace(
 
 
                     <div class="delivery-box">
+
 
                         <div class="delivery-icon">
                             🚚
@@ -1462,7 +2002,9 @@ $statusClass = str_replace(
                         <p>
 
                             This order is already marked as
-                            <strong>Out for Delivery</strong>.
+                            <strong>
+                                Out for Delivery
+                            </strong>.
 
                             Please proceed to the customer's
                             delivery address.
@@ -1494,7 +2036,9 @@ $statusClass = str_replace(
 
                         <div class="note">
 
-                            <strong>Delivery OTP:</strong>
+                            <strong>
+                                Delivery OTP:
+                            </strong>
 
                             Ask the customer for the OTP
                             only when you are at the delivery location.
@@ -1504,6 +2048,7 @@ $statusClass = str_replace(
 
                         </div>
 
+
                     </div>
 
 
@@ -1511,6 +2056,7 @@ $statusClass = str_replace(
 
 
                     <div class="delivery-box">
+
 
                         <div class="delivery-icon">
                             ℹ
@@ -1527,7 +2073,9 @@ $statusClass = str_replace(
                             This delivery is currently
 
                             <strong>
-                                <?= e($statusLabel) ?>
+                                <?= e(
+                                    $statusLabel
+                                ) ?>
                             </strong>
 
                             and cannot be marked as
@@ -1538,12 +2086,14 @@ $statusClass = str_replace(
 
                         <div class="btn-row">
 
+
                             <a
                                 href="order-details.php?delivery_id=<?= (int)$deliveryId ?>"
                                 class="btn btn-primary"
                             >
                                 View Order
                             </a>
+
 
                         </div>
 

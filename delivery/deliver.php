@@ -62,7 +62,7 @@ if ($deliveryId <= 0) {
 
 
 // =====================================================
-// FETCH DELIVERY
+// FETCH DELIVERY + ORDER
 // =====================================================
 
 $delivery = null;
@@ -70,25 +70,32 @@ $delivery = null;
 
 $sql = "
     SELECT
+
         d.id AS delivery_id,
         d.order_id,
         d.delivery_person_id,
         d.status AS delivery_status,
+
         d.delivery_otp,
         d.delivery_note,
         d.failure_reason,
 
         o.id AS order_id,
         o.order_number,
+
         o.customer_name,
         o.customer_mobile,
+
         o.delivery_address,
         o.city,
         o.state,
         o.pincode,
+
         o.total_amount,
+
         o.payment_method,
         o.payment_status,
+
         o.order_status
 
     FROM deliveries d
@@ -175,6 +182,7 @@ if (!$delivery) {
             Delivery Not Found | Medicine Aapki Gaw Mein
         </title>
 
+
         <style>
 
             * {
@@ -183,22 +191,32 @@ if (!$delivery) {
                 padding: 0;
             }
 
+
             body {
+
                 font-family: Arial, sans-serif;
+
                 background: #f5f7fb;
+
                 min-height: 100vh;
 
                 display: flex;
+
                 align-items: center;
+
                 justify-content: center;
 
                 padding: 20px;
+
             }
 
+
             .error-card {
+
                 background: #fff;
 
                 width: 100%;
+
                 max-width: 500px;
 
                 padding: 45px 30px;
@@ -208,19 +226,30 @@ if (!$delivery) {
                 text-align: center;
 
                 border: 1px solid #edf0f4;
+
             }
+
 
             .error-icon {
+
                 font-size: 55px;
+
                 margin-bottom: 18px;
+
             }
+
 
             .error-card h2 {
+
                 color: #333;
+
                 margin-bottom: 10px;
+
             }
 
+
             .error-card p {
+
                 color: #888;
 
                 font-size: 14px;
@@ -228,9 +257,12 @@ if (!$delivery) {
                 line-height: 1.6;
 
                 margin-bottom: 25px;
+
             }
 
+
             .back-btn {
+
                 display: inline-block;
 
                 background: #238b39;
@@ -246,11 +278,13 @@ if (!$delivery) {
                 font-size: 13px;
 
                 font-weight: 600;
+
             }
 
         </style>
 
     </head>
+
 
     <body>
 
@@ -260,20 +294,27 @@ if (!$delivery) {
                 📦
             </div>
 
+
             <h2>
                 Delivery Not Found
             </h2>
 
+
             <p>
+
                 This delivery does not exist or
                 it is not assigned to you.
+
             </p>
+
 
             <a
                 href="orders.php"
                 class="back-btn"
             >
+
                 ← Back to Orders
+
             </a>
 
         </div>
@@ -319,6 +360,78 @@ if ($currentStatus !== 'out_for_delivery') {
 
 
 // =====================================================
+// ORDER DATA
+// =====================================================
+
+$orderId =
+    (int)$delivery['order_id'];
+
+
+$orderNumber =
+    $delivery['order_number']
+    ?? $orderId;
+
+
+$customerName =
+    $delivery['customer_name']
+    ?? 'Customer';
+
+
+$customerMobile =
+    $delivery['customer_mobile']
+    ?? '';
+
+
+$address =
+    $delivery['delivery_address']
+    ?? '';
+
+
+$city =
+    $delivery['city']
+    ?? '';
+
+
+$state =
+    $delivery['state']
+    ?? '';
+
+
+$pincode =
+    $delivery['pincode']
+    ?? '';
+
+
+$totalAmount =
+    (float)(
+        $delivery['total_amount']
+        ?? 0
+    );
+
+
+$paymentMethod =
+    strtolower(
+        trim(
+            $delivery['payment_method']
+            ?? 'cod'
+        )
+    );
+
+
+$paymentStatus =
+    strtolower(
+        trim(
+            $delivery['payment_status']
+            ?? 'pending'
+        )
+    );
+
+
+$isCod =
+    ($paymentMethod === 'cod');
+
+
+// =====================================================
 // OTP MESSAGE
 // =====================================================
 
@@ -326,10 +439,29 @@ $error = '';
 
 
 // =====================================================
-// VERIFY OTP
+// SUCCESS MESSAGE
+// =====================================================
+
+$success =
+    $_SESSION['delivery_success']
+    ?? '';
+
+
+unset(
+    $_SESSION['delivery_success']
+);
+
+
+// =====================================================
+// VERIFY OTP + COMPLETE DELIVERY
 // =====================================================
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+
+    // =================================================
+    // OTP
+    // =================================================
 
     $otp =
         trim(
@@ -337,9 +469,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         );
 
 
-    // -------------------------------------------------
-    // BASIC VALIDATION
-    // -------------------------------------------------
+    // =================================================
+    // COD CASH CONFIRMATION
+    // =================================================
+
+    $cashReceived =
+        isset(
+            $_POST['cash_received']
+        );
+
+
+    // =================================================
+    // BASIC OTP VALIDATION
+    // =================================================
 
     if ($otp === '') {
 
@@ -348,12 +490,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     }
 
-    elseif (!preg_match('/^[0-9]{4,10}$/', $otp)) {
+
+    elseif (
+        !preg_match(
+            '/^[0-9]{6}$/',
+            $otp
+        )
+    ) {
 
         $error =
-            "Please enter a valid OTP.";
+            "Please enter a valid 6-digit OTP.";
 
     }
+
+
+    // =================================================
+    // OTP AVAILABLE CHECK
+    // =================================================
 
     elseif (
         empty(
@@ -362,13 +515,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     ) {
 
         $error =
-            "Delivery OTP is not available for this order.";
+            "Delivery OTP is not available for this order. Please contact admin.";
 
     }
 
-    // -------------------------------------------------
-    // OTP CHECK
-    // -------------------------------------------------
+
+    // =================================================
+    // OTP VERIFY
+    // =================================================
 
     elseif (
         !hash_equals(
@@ -382,11 +536,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     }
 
-    // -------------------------------------------------
-    // OTP CORRECT
-    // -------------------------------------------------
+
+    // =================================================
+    // COD CASH CHECK
+    // =================================================
+
+    elseif (
+        $isCod &&
+        !$cashReceived
+    ) {
+
+        $error =
+            "Please confirm that the COD cash payment has been received.";
+
+    }
+
+
+    // =================================================
+    // ALL VALID
+    // =================================================
 
     else {
+
 
         mysqli_begin_transaction(
             $conn
@@ -395,9 +566,153 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
 
-            // =================================================
+
+            // =============================================
+            // RE-CHECK DELIVERY STATUS
+            // Prevent duplicate/double completion
+            // =============================================
+
+            $lockDeliverySql = "
+                SELECT
+                    id,
+                    order_id,
+                    status,
+                    delivery_otp
+
+                FROM deliveries
+
+                WHERE id = ?
+                AND delivery_person_id = ?
+
+                LIMIT 1
+
+                FOR UPDATE
+            ";
+
+
+            $lockDeliveryStmt =
+                mysqli_prepare(
+                    $conn,
+                    $lockDeliverySql
+                );
+
+
+            if (!$lockDeliveryStmt) {
+
+                throw new Exception(
+                    "Unable to verify delivery status."
+                );
+
+            }
+
+
+            mysqli_stmt_bind_param(
+                $lockDeliveryStmt,
+                "ii",
+                $deliveryId,
+                $deliveryBoyId
+            );
+
+
+            if (
+                !mysqli_stmt_execute(
+                    $lockDeliveryStmt
+                )
+            ) {
+
+                mysqli_stmt_close(
+                    $lockDeliveryStmt
+                );
+
+                throw new Exception(
+                    "Unable to verify delivery."
+                );
+
+            }
+
+
+            $lockResult =
+                mysqli_stmt_get_result(
+                    $lockDeliveryStmt
+                );
+
+
+            $lockedDelivery =
+                $lockResult
+                    ? mysqli_fetch_assoc(
+                        $lockResult
+                    )
+                    : null;
+
+
+            mysqli_stmt_close(
+                $lockDeliveryStmt
+            );
+
+
+            if (!$lockedDelivery) {
+
+                throw new Exception(
+                    "Delivery was not found or is not assigned to you."
+                );
+
+            }
+
+
+            if (
+                strtolower(
+                    trim(
+                        $lockedDelivery['status']
+                    )
+                ) !== 'out_for_delivery'
+            ) {
+
+                throw new Exception(
+                    "This delivery has already been completed or its status has changed."
+                );
+
+            }
+
+
+            // =============================================
+            // RE-CHECK OTP FROM DATABASE
+            // =============================================
+
+            $databaseOtp =
+                (string)(
+                    $lockedDelivery['delivery_otp']
+                    ?? ''
+                );
+
+
+            if (
+                $databaseOtp === ''
+            ) {
+
+                throw new Exception(
+                    "Delivery OTP is not available for this order."
+                );
+
+            }
+
+
+            if (
+                !hash_equals(
+                    $databaseOtp,
+                    (string)$otp
+                )
+            ) {
+
+                throw new Exception(
+                    "Invalid OTP. Please ask the customer for the correct OTP."
+                );
+
+            }
+
+
+            // =============================================
             // UPDATE DELIVERY
-            // =================================================
+            // =============================================
 
             $deliveryUpdateSql = "
                 UPDATE deliveries
@@ -474,9 +789,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
 
-            // =================================================
-            // UPDATE ORDER
-            // =================================================
+            // =============================================
+            // UPDATE ORDER STATUS
+            // =============================================
 
             $orderUpdateSql = "
                 UPDATE orders
@@ -505,10 +820,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
 
-            $orderId =
-                (int)$delivery['order_id'];
-
-
             mysqli_stmt_bind_param(
                 $orderUpdateStmt,
                 "i",
@@ -533,32 +844,140 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
 
+            $orderAffectedRows =
+                mysqli_stmt_affected_rows(
+                    $orderUpdateStmt
+                );
+
+
             mysqli_stmt_close(
                 $orderUpdateStmt
             );
 
 
-            // =================================================
+            // =============================================
+            // COD PAYMENT UPDATE
+            // =============================================
+
+            if ($isCod) {
+
+
+                /*
+                 * COD order:
+                 *
+                 * pending → paid
+                 *
+                 * Only change payment status when it is
+                 * still pending.
+                 */
+
+
+                $paymentUpdateSql = "
+                    UPDATE orders
+
+                    SET
+                        payment_status = 'paid',
+                        updated_at = NOW()
+
+                    WHERE id = ?
+                    AND payment_status = 'pending'
+                ";
+
+
+                $paymentUpdateStmt =
+                    mysqli_prepare(
+                        $conn,
+                        $paymentUpdateSql
+                    );
+
+
+                if (!$paymentUpdateStmt) {
+
+                    throw new Exception(
+                        "Unable to prepare COD payment update."
+                    );
+
+                }
+
+
+                mysqli_stmt_bind_param(
+                    $paymentUpdateStmt,
+                    "i",
+                    $orderId
+                );
+
+
+                if (
+                    !mysqli_stmt_execute(
+                        $paymentUpdateStmt
+                    )
+                ) {
+
+                    mysqli_stmt_close(
+                        $paymentUpdateStmt
+                    );
+
+                    throw new Exception(
+                        "Unable to update COD payment status."
+                    );
+
+                }
+
+
+                $paymentAffectedRows =
+                    mysqli_stmt_affected_rows(
+                        $paymentUpdateStmt
+                    );
+
+
+                mysqli_stmt_close(
+                    $paymentUpdateStmt
+                );
+
+
+                /*
+                 * If it was already paid, that's okay.
+                 *
+                 * We do not fail the delivery.
+                 */
+
+
+            }
+
+
+            // =============================================
             // COMMIT
-            // =================================================
+            // =============================================
 
             mysqli_commit(
                 $conn
             );
 
 
-            // =================================================
-            // SUCCESS
-            // =================================================
+            // =============================================
+            // SUCCESS MESSAGE
+            // =============================================
 
-            $_SESSION['delivery_success'] =
-                "Order #" .
-                (
-                    $delivery['order_number']
-                    ?? $orderId
-                ) .
-                " delivered successfully.";
+            if ($isCod) {
 
+                $_SESSION['delivery_success'] =
+                    "Order #" .
+                    $orderNumber .
+                    " delivered successfully and COD payment marked as paid.";
+
+            } else {
+
+                $_SESSION['delivery_success'] =
+                    "Order #" .
+                    $orderNumber .
+                    " delivered successfully.";
+
+            }
+
+
+            // =============================================
+            // REDIRECT
+            // =============================================
 
             header(
                 "Location: order-details.php?delivery_id=" .
@@ -571,6 +990,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (
             Throwable $e
         ) {
+
 
             mysqli_rollback(
                 $conn
@@ -601,64 +1021,11 @@ $firstLetter =
     );
 
 
-// =====================================================
-// SUCCESS MESSAGE FROM SESSION
-// =====================================================
+if ($firstLetter === '') {
 
-$success =
-    $_SESSION['delivery_success']
-    ?? '';
+    $firstLetter = 'D';
 
-
-unset(
-    $_SESSION['delivery_success']
-);
-
-
-// =====================================================
-// PAGE DATA
-// =====================================================
-
-$orderNumber =
-    $delivery['order_number']
-    ?? $delivery['order_id'];
-
-
-$customerName =
-    $delivery['customer_name']
-    ?? 'Customer';
-
-
-$customerMobile =
-    $delivery['customer_mobile']
-    ?? '';
-
-
-$address =
-    $delivery['delivery_address']
-    ?? '';
-
-
-$city =
-    $delivery['city']
-    ?? '';
-
-
-$state =
-    $delivery['state']
-    ?? '';
-
-
-$pincode =
-    $delivery['pincode']
-    ?? '';
-
-
-$totalAmount =
-    (float)(
-        $delivery['total_amount']
-        ?? 0
-    );
+}
 
 ?>
 
@@ -670,15 +1037,23 @@ $totalAmount =
 
 <meta charset="UTF-8">
 
+
 <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
 >
 
+
 <title>
+
     Complete Delivery |
-    <?= e($orderNumber) ?> |
+
+    <?= e($orderNumber) ?>
+
+    |
+
     Medicine Aapki Gaw Mein
+
 </title>
 
 
@@ -1165,6 +1540,49 @@ a {
 
 
 /* =====================================================
+   ALERT
+===================================================== */
+
+.alert {
+
+    padding: 13px 16px;
+
+    border-radius: 9px;
+
+    margin: 20px 20px 0;
+
+    font-size: 12px;
+
+    font-weight: 500;
+
+}
+
+
+.alert-error {
+
+    background: #fff0f1;
+
+    color: #a51d2d;
+
+    border:
+        1px solid #f2ced2;
+
+}
+
+
+.alert-success {
+
+    background: #eaf8ed;
+
+    color: #197333;
+
+    border:
+        1px solid #cdebd3;
+
+}
+
+
+/* =====================================================
    OTP
 ===================================================== */
 
@@ -1218,44 +1636,9 @@ a {
 }
 
 
-.alert {
-
-    padding: 13px 16px;
-
-    border-radius: 9px;
-
-    margin-bottom: 18px;
-
-    font-size: 12px;
-
-    font-weight: 500;
-
-}
-
-
-.alert-error {
-
-    background: #fff0f1;
-
-    color: #a51d2d;
-
-    border:
-        1px solid #f2ced2;
-
-}
-
-
-.alert-success {
-
-    background: #eaf8ed;
-
-    color: #197333;
-
-    border:
-        1px solid #cdebd3;
-
-}
-
+/* =====================================================
+   OTP INPUT
+===================================================== */
 
 .otp-input {
 
@@ -1294,6 +1677,134 @@ a {
 }
 
 
+/* =====================================================
+   COD PAYMENT
+===================================================== */
+
+.cod-section {
+
+    margin-top: 15px;
+
+    padding: 15px;
+
+    background: #fff8e8;
+
+    border:
+        1px solid #f1dfad;
+
+    border-radius: 9px;
+
+}
+
+
+.cod-header {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    gap: 10px;
+
+    margin-bottom: 8px;
+
+}
+
+
+.cod-header strong {
+
+    color: #6e5510;
+
+    font-size: 12px;
+
+}
+
+
+.cod-amount {
+
+    color: #8a6a16;
+
+    font-size: 15px;
+
+    font-weight: 700;
+
+}
+
+
+.cod-text {
+
+    color: #806b31;
+
+    font-size: 10px;
+
+    line-height: 1.6;
+
+    margin-bottom: 12px;
+
+}
+
+
+/* =====================================================
+   CHECKBOX
+===================================================== */
+
+.cash-check {
+
+    display: flex;
+
+    align-items: flex-start;
+
+    gap: 10px;
+
+    padding: 11px;
+
+    background: #fff;
+
+    border:
+        1px solid #eadfbf;
+
+    border-radius: 8px;
+
+    cursor: pointer;
+
+}
+
+
+.cash-check input {
+
+    width: 17px;
+
+    height: 17px;
+
+    margin-top: 1px;
+
+    accent-color: #238b39;
+
+    cursor: pointer;
+
+    flex-shrink: 0;
+
+}
+
+
+.cash-check span {
+
+    color: #5e512f;
+
+    font-size: 11px;
+
+    line-height: 1.5;
+
+    font-weight: 500;
+
+}
+
+
+/* =====================================================
+   VERIFY BUTTON
+===================================================== */
+
 .verify-btn {
 
     width: 100%;
@@ -1328,20 +1839,24 @@ a {
 }
 
 
+/* =====================================================
+   SECURITY NOTE
+===================================================== */
+
 .security-note {
 
     margin-top: 14px;
 
     padding: 12px;
 
-    background: #fff8e8;
+    background: #f4f9f5;
 
     border:
-        1px solid #f4e4b8;
+        1px solid #dceee0;
 
     border-radius: 8px;
 
-    color: #8a6a16;
+    color: #46704e;
 
     font-size: 10px;
 
@@ -1362,6 +1877,7 @@ a {
         display: none;
     }
 
+
     .main-content {
 
         margin-left: 0;
@@ -1370,11 +1886,13 @@ a {
 
     }
 
+
     .topbar {
 
         padding: 0 18px;
 
     }
+
 
     .content {
 
@@ -1393,11 +1911,13 @@ a {
 
     }
 
+
     .order-info {
 
         grid-template-columns: 1fr;
 
     }
+
 
     .full {
 
@@ -1405,11 +1925,13 @@ a {
 
     }
 
+
     .delivery-info {
 
         display: none;
 
     }
+
 
     .topbar-title h1 {
 
@@ -1417,11 +1939,21 @@ a {
 
     }
 
+
     .otp-input {
 
         font-size: 20px;
 
         letter-spacing: 5px;
+
+    }
+
+
+    .cod-header {
+
+        align-items: flex-start;
+
+        flex-direction: column;
 
     }
 
@@ -1447,18 +1979,22 @@ a {
 
     <div class="sidebar-brand">
 
+
         <div class="brand-icon">
             🚚
         </div>
+
 
         <h2>
             Medicine Aapki<br>
             Gaw Mein
         </h2>
 
+
         <p>
             Delivery Panel
         </p>
+
 
     </div>
 
@@ -1600,7 +2136,9 @@ a {
         href="order-details.php?delivery_id=<?= (int)$deliveryId ?>"
         class="back-btn"
     >
+
         ← Back to Order
+
     </a>
 
 </div>
@@ -1624,14 +2162,11 @@ a {
 
     <?php if ($error !== ''): ?>
 
-        <div style="padding:20px 20px 0;">
+        <div class="alert alert-error">
 
-            <div class="alert alert-error">
+            ⚠
 
-                ⚠
-                <?= e($error) ?>
-
-            </div>
+            <?= e($error) ?>
 
         </div>
 
@@ -1640,14 +2175,11 @@ a {
 
     <?php if ($success !== ''): ?>
 
-        <div style="padding:20px 20px 0;">
+        <div class="alert alert-success">
 
-            <div class="alert alert-success">
+            ✓
 
-                ✓
-                <?= e($success) ?>
-
-            </div>
+            <?= e($success) ?>
 
         </div>
 
@@ -1710,6 +2242,7 @@ a {
                     >
 
                         📱
+
                         <?= e($customerMobile) ?>
 
                     </a>
@@ -1735,8 +2268,7 @@ a {
 
                 <?= e(
                     strtoupper(
-                        $delivery['payment_method']
-                        ?? 'COD'
+                        $paymentMethod
                     )
                 ) ?>
 
@@ -1744,8 +2276,7 @@ a {
 
                 <?= e(
                     ucfirst(
-                        $delivery['payment_status']
-                        ?? 'pending'
+                        $paymentStatus
                     )
                 ) ?>
 
@@ -1810,14 +2341,17 @@ a {
                 🔐
             </div>
 
+
             <h3>
                 Customer OTP Verification
             </h3>
 
+
             <p>
 
-                Ask the customer for the OTP received
-                on their registered mobile number.
+                Ask the customer for the
+                <strong>6-digit OTP</strong>
+                received on their registered mobile number.
 
                 <br>
 
@@ -1846,13 +2380,89 @@ a {
                 type="text"
                 name="otp"
                 class="otp-input"
-                maxlength="10"
+                maxlength="6"
+                minlength="6"
                 inputmode="numeric"
-                pattern="[0-9]*"
+                pattern="[0-9]{6}"
                 placeholder="••••••"
                 autocomplete="one-time-code"
                 required
             >
+
+
+            <!-- =========================================
+                 COD PAYMENT
+            ========================================== -->
+
+            <?php if ($isCod): ?>
+
+
+                <div class="cod-section">
+
+
+                    <div class="cod-header">
+
+
+                        <strong>
+                            💵 COD Payment Collection
+                        </strong>
+
+
+                        <span class="cod-amount">
+
+                            ₹<?= number_format(
+                                $totalAmount,
+                                2
+                            ) ?>
+
+                        </span>
+
+
+                    </div>
+
+
+                    <div class="cod-text">
+
+                        This is a Cash on Delivery order.
+                        Collect the exact order amount from
+                        the customer before completing delivery.
+
+                    </div>
+
+
+                    <label class="cash-check">
+
+
+                        <input
+                            type="checkbox"
+                            name="cash_received"
+                            value="1"
+                            required
+                        >
+
+
+                        <span>
+
+                            I confirm that I have received
+                            the COD cash payment of
+                            <strong>
+                                ₹<?= number_format(
+                                    $totalAmount,
+                                    2
+                                ) ?>
+                            </strong>
+                            from the customer.
+
+                        </span>
+
+
+                    </label>
+
+
+                </div>
+
+
+            <?php endif; ?>
 
 
             <button
@@ -1860,7 +2470,16 @@ a {
                 class="verify-btn"
             >
 
-                ✓ Verify OTP & Complete Delivery
+                ✓
+
+                Verify OTP &
+
+                <?= $isCod
+                    ? 'Confirm Cash & '
+                    : ''
+                ?>
+
+                Complete Delivery
 
             </button>
 
@@ -1870,8 +2489,12 @@ a {
 
         <div class="security-note">
 
-            🔒 OTP is used only to confirm that the
-            order has been received by the customer.
+            🔒
+
+            <?= $isCod
+                ? 'OTP verification confirms delivery and the cash confirmation records the COD payment as paid.'
+                : 'OTP is used only to confirm that the order has been received by the customer.'
+            ?>
 
         </div>
 

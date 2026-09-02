@@ -253,9 +253,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     // CUSTOMER
                     // =========================================
 
-                    header(
-                        "Location: index.php"
-                    );
+                    // header(
+                    //     "Location: index.php"
+                    // );
+                    header("Location: customer/index.php");
 
                     exit;
                 }
